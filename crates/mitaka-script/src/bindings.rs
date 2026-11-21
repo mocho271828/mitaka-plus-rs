@@ -121,7 +121,7 @@ pub const FIELDS: &[Field] = &[
     flag("GUI", "timeSetting", "toggleTimeSetting", "timeSetting", 14, true),
     flag("GUI", "placeSetting", "togglePlaceSetting", "placeSetting", 15, true),
     flag("GUI", "scriptOutput", "toggleScriptOutput", "scriptOutput", 16, true),
-    flag("GUI", "dualScreen", "toggleDualScreen", "dualScreen", 17, false),
+    flag("GUI", "dualScreen", "toggleDualScreen", "dualScreen", 17, true),
     field("Time", "JD", "jd", 0, Finite),
     field("Time", "step", "timeStep", 72, Index(11)),
     field("Time", "stepValue", "timeStepValue", 73, Finite),

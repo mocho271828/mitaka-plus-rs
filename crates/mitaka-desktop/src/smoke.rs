@@ -80,8 +80,15 @@ impl Smoke {
             .as_ref()
             .ok_or_else(|| io::Error::other("データをロードできません"))?;
         match scene {
-            Scene::Sky => app.view = View::Sky,
-            Scene::Horizon => app.view = View::Horizon,
+            Scene::Sky => {
+                app.view = View::Sky;
+                app.projector.open = true;
+                app.projector.probe = true;
+            }
+            Scene::Horizon => {
+                app.view = View::Horizon;
+                app.projector.open = false;
+            }
             Scene::Solar => {
                 // 単なるエラー文を描画成功として数えない。
                 app.solar.prepare(&data.ephemeris, app.jd)?;
@@ -154,6 +161,9 @@ impl Smoke {
             } else {
                 self.index += 1;
             }
+            return Ok(false);
+        }
+        if scene == Scene::Sky && !app.projector.verified() {
             return Ok(false);
         }
         if scene == Scene::Galaxy {
