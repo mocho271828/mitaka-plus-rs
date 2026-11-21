@@ -2654,6 +2654,7 @@ dependencies = [
  "command-group",
  "flate2",
  "interprocess",
+ "mitaka-core",
  "mlua",
  "mlua-sys",
  "serde_json",
