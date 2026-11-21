@@ -89,7 +89,16 @@ impl Surface {
         }))
     }
     pub fn effect(&self, normal: Vector3, footprint: f64) -> io::Result<Effect> {
-        if !normal.iter().all(|v| v.is_finite())
+        let point = add(
+            self.receiver.center_au,
+            scale(normal, self.receiver.radius_au),
+        );
+        self.effect_at(point, normal, footprint)
+    }
+    /// 実際の地形交点とその照明法線を日食計算に与える。
+    pub fn effect_at(&self, point: Vector3, normal: Vector3, footprint: f64) -> io::Result<Effect> {
+        if !point.iter().all(|v| v.is_finite())
+            || !normal.iter().all(|v| v.is_finite())
             || (dot(normal, normal) - 1.).abs() > 1e-8
             || !footprint.is_finite()
             || footprint < 0.
@@ -98,10 +107,6 @@ impl Surface {
                 "eclipse requires a unit normal and nonnegative finite pixel footprint",
             ));
         }
-        let point = add(
-            self.receiver.center_au,
-            scale(normal, self.receiver.radius_au),
-        );
         let mut result = Effect::default();
         if dot(normal, sub(self.sun.center_au, point)) <= 0. {
             return Ok(result);

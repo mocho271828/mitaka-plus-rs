@@ -4,6 +4,7 @@ pub(crate) mod precise;
 mod scales;
 pub(crate) mod sky;
 pub(crate) mod sphere;
+mod terrain;
 use eframe::egui::{self, Color32, Pos2, Rect, Stroke};
 use mitaka_core::{
     astronomy::j2000_equatorial_to_ecliptic,
@@ -227,6 +228,7 @@ pub(crate) struct ViewSettings<'a> {
     pub observer: [f64; 2],
     pub galaxies: &'a mut crate::galaxies::Browser,
     pub star_display: sky::Display,
+    pub terrain_mode: mitaka_core::terrain::Amplification,
 }
 pub struct Solar {
     scene: Option<Scene>,
@@ -474,6 +476,7 @@ impl Solar {
             observer,
             galaxies,
             star_display,
+            terrain_mode,
         } = settings;
         let system = &data.ephemeris;
         let root = &data.root;
@@ -590,6 +593,11 @@ impl Solar {
         };
         let sky_hits = sky.draw(&painter, rect, self.camera, click);
         self.surfaces.begin_frame();
+        self.surfaces.mode = terrain_mode;
+        self.surfaces.preview = response.dragged() || self.surface_flight.is_some();
+        let nearest_terrain = [3, 4]
+            .into_iter()
+            .find(|&i| terrain::near(self.camera, scene.bodies[i], i));
         scales::paint(&painter, rect, self.camera, layers, observer, jd);
         if self.orbits {
             let stroke = Stroke::new(0.7_f32, Color32::from_rgb(59, 77, 100));
@@ -669,7 +677,9 @@ impl Solar {
             }
             let tile =
                 Rect::from_center_size(pos, egui::Vec2::splat(physical * 2.6 + 4.)).intersect(rect);
-            let textured = self.layers.visible
+            let in_foreground = nearest_terrain == Some(i);
+            let textured = !in_foreground
+                && self.layers.visible
                 && physical >= 2.
                 && tile.is_positive()
                 && self.surfaces.draw(
@@ -683,7 +693,7 @@ impl Solar {
                         tile,
                     },
                 )?;
-            if self.layers.visible && !textured {
+            if self.layers.visible && !textured && !in_foreground {
                 painter.circle_filled(pos, radius, COLORS[i]);
             }
             if i == self.selected {
@@ -715,7 +725,7 @@ impl Solar {
                     COLORS[i],
                 );
             }
-            if !self.layers.visible && !self.layers.labels {
+            if in_foreground || !self.layers.visible && !self.layers.labels {
                 continue;
             }
             if let Some(click) = click {
@@ -727,18 +737,23 @@ impl Solar {
             }
         }
         if self.layers.visible {
-            if on_surface {
+            if let Some(foreground) = nearest_terrain.or(on_surface.then_some(self.selected)) {
                 self.surfaces.draw(
                     &painter,
                     root,
                     self.camera,
                     scene,
-                    self.selected,
+                    foreground,
                     sphere::Region {
                         viewport: rect,
                         tile: rect,
                     },
                 )?;
+                if !on_surface
+                    && click.is_some_and(|p| self.surfaces.body_depth_at(foreground, p).is_finite())
+                {
+                    pick = Some(foreground);
+                }
             }
             self.eclipse_overlay
                 .draw(&painter, rect, scene, self.camera, self.surfaces.eclipse)?;
