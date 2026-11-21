@@ -118,7 +118,7 @@ assert(Camera.zoom == UNIT_AU)
 assert(not pcall(function() Time.JD = "1" end))
 Time.JD = 2451546
 Stars:toggleLabels()
-print(Camera.target)
+print("", Camera.target, "")
 Time:stop()
 "#,
     )
@@ -159,7 +159,7 @@ Time:stop()
                 json!({"ok":true})
             }
             "log" => {
-                assert_eq!(msg["text"], "Planet.Earth");
+                assert_eq!(msg["text"], "\tPlanet.Earth\t");
                 saw_log = true;
                 json!({"ok":true})
             }

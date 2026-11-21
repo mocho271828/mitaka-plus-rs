@@ -249,8 +249,8 @@ pub fn install(lua: &Lua, host: Option<&SharedHost>) -> mlua::Result<()> {
         "print",
         lua.create_function(move |_, values: MultiValue| {
             let mut output = Vec::new();
-            for value in values {
-                if !output.is_empty() {
+            for (index, value) in values.into_iter().enumerate() {
+                if index != 0 {
                     output.push(b'\t');
                 }
                 if let LuaValue::String(v) = &value {
