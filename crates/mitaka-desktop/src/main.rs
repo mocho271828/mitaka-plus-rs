@@ -664,9 +664,35 @@ impl App {
                 galaxies,
                 surface_site: self.motion.site.as_mut(),
                 observer: [self.latitude, self.longitude],
+                star_display: solar::sky::Display {
+                    magnitude: self.options.magnitude,
+                    lines: self.options.lines,
+                    labels: self.options.labels,
+                    selected: self.selected,
+                },
             };
             if let Err(e) = self.solar.draw(ui, view) {
                 ui.label(e.to_string());
+            }
+            if let Some(hit) = self.solar.sky_pick {
+                self.selected = match hit {
+                    solar::sky::Selection::Star(hip) => Some(hip),
+                    solar::sky::Selection::Constellation(_) => None,
+                };
+            }
+            if let Some(solar::sky::Selection::Constellation(i)) = self.solar.sky_selection {
+                if let Some(r) = data.constellations.get(i) {
+                    ui.painter().text(
+                        ui.clip_rect().left_bottom() + egui::vec2(10., -8.),
+                        egui::Align2::LEFT_BOTTOM,
+                        format!(
+                            "選択した星座　{}",
+                            layers::catalog::decode(&r.japanese_kanji_bytes)
+                        ),
+                        egui::FontId::proportional(13.),
+                        egui::Color32::GOLD,
+                    );
+                }
             }
             self.object_in_solar(ui);
             self.script_marker(ui);

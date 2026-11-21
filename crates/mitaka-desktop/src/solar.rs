@@ -2,6 +2,7 @@
 mod eclipse;
 pub(crate) mod precise;
 mod scales;
+pub(crate) mod sky;
 pub(crate) mod sphere;
 use eframe::egui::{self, Color32, Pos2, Rect, Stroke};
 use mitaka_core::{
@@ -225,6 +226,7 @@ pub(crate) struct ViewSettings<'a> {
     pub surface_site: Option<&'a mut crate::camera_control::session::Site>,
     pub observer: [f64; 2],
     pub galaxies: &'a mut crate::galaxies::Browser,
+    pub star_display: sky::Display,
 }
 pub struct Solar {
     scene: Option<Scene>,
@@ -240,6 +242,8 @@ pub struct Solar {
     eclipse_overlay: eclipse::Overlay,
     surface_flight: Option<SurfaceFlight>,
     pub landed: Option<usize>,
+    pub sky_selection: Option<sky::Selection>,
+    pub sky_pick: Option<sky::Selection>,
 }
 impl Default for Solar {
     fn default() -> Self {
@@ -257,6 +261,8 @@ impl Default for Solar {
             eclipse_overlay: Default::default(),
             surface_flight: None,
             landed: None,
+            sky_selection: None,
+            sky_pick: None,
         }
     }
 }
@@ -467,6 +473,7 @@ impl Solar {
             surface_site,
             observer,
             galaxies,
+            star_display,
         } = settings;
         let system = &data.ephemeris;
         let root = &data.root;
@@ -494,6 +501,7 @@ impl Solar {
             ui.allocate_painter(ui.available_size(), egui::Sense::click_and_drag());
         let rect = response.rect;
         let modifiers = ui.input(|i| i.modifiers);
+        let has_site = surface_site.is_some();
         let on_surface = surface_site
             .as_ref()
             .is_some_and(|s| s.body == self.selected && s.height <= 0.002000001);
@@ -571,6 +579,17 @@ impl Solar {
             self.camera.target = dest;
         }
         galaxies.paint(&painter, &response, self.camera, &layers.deep_sky, picking);
+        let click = picking.pointer(&response);
+        let sky = sky::Sky {
+            data,
+            layers,
+            display: star_display,
+            selected: self.sky_selection,
+            apparent: has_site || self.surface_flight.is_some(),
+            preview: response.dragged() || self.flight.is_some(),
+        };
+        let sky_hits = sky.draw(&painter, rect, self.camera, click);
+        self.surfaces.begin_frame();
         scales::paint(&painter, rect, self.camera, layers, observer, jd);
         if self.orbits {
             let stroke = Stroke::new(0.7_f32, Color32::from_rgb(59, 77, 100));
@@ -635,7 +654,6 @@ impl Solar {
             })
             .collect();
         visible.sort_by(|a, b| b.2.total_cmp(&a.2));
-        let click = picking.pointer(&response);
         let mut pick = None;
         let mut nearest = f32::INFINITY;
         for (i, pos, depth) in visible {
@@ -725,7 +743,17 @@ impl Solar {
             self.eclipse_overlay
                 .draw(&painter, rect, scene, self.camera, self.surfaces.eclipse)?;
         }
+        self.sky_pick = None;
+        if pick.is_none() || on_surface {
+            if let Some(hit) = click.and_then(|p| sky_hits.pick(p, |q| self.surfaces.opaque_at(q)))
+            {
+                self.sky_pick = Some(hit);
+                self.sky_selection = Some(hit);
+                pick = None;
+            }
+        }
         if let Some(i) = pick {
+            self.sky_selection = None;
             self.stop();
             self.selected = i;
             ui.ctx().request_repaint();
