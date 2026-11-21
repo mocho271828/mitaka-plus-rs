@@ -68,6 +68,30 @@ impl App {
                 self.view = view;
                 self.camera().center(view, coords);
             }
+            Position::Solar(point, _)
+                if self.view == View::Horizon
+                    && matches!(
+                        self.objects.kind,
+                        super::Kind::Small | super::Kind::Spacecraft
+                    ) =>
+            {
+                let observed = mitaka_core::topocentric::Observer::from_ephemeris(
+                    &data.ephemeris,
+                    self.jd,
+                    self.latitude,
+                    self.longitude,
+                )
+                .and_then(|site| site.observe(point));
+                match observed {
+                    Ok(apparent) => {
+                        self.objects
+                            .horizon
+                            .focus(self.objects.kind, self.objects.active);
+                        self.horizon.center(View::Horizon, apparent.horizontal_deg);
+                    }
+                    Err(e) => self.error = Some(e.to_string()),
+                }
+            }
             Position::Solar(point, distance) => {
                 let previous_view = self.view;
                 self.view = View::Solar;

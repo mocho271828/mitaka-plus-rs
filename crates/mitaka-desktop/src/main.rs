@@ -699,7 +699,7 @@ impl App {
             frame: &frame,
             rect,
         };
-        let click = self.picking.pointer(&response);
+        let pointer = self.picking.pointer(&response);
         let Some(data) = self.data.as_ref() else {
             return;
         };
@@ -721,18 +721,68 @@ impl App {
                 rect,
             );
         }
-        let click = click.filter(|p| !show_landscape || !self.landscape_render.opaque_at(*p));
+        let opaque = |p| show_landscape && self.landscape_render.opaque_at(p);
+        let click = pointer.filter(|p| !opaque(*p));
         let pick = chart.paint(&painter, data, &self.options, self.selected, click);
-        let body_pick = planet_layers::positions(&data.ephemeris, self.jd)
-            .ok()
-            .and_then(|bodies| self.solar.layers.paint(&chart, &painter, &bodies, click));
+        let bodies = planet_layers::positions(&data.ephemeris, self.jd).ok();
+        let mut body_pick = bodies
+            .as_ref()
+            .and_then(|b| self.solar.layers.paint(&chart, &painter, b, click));
+        let mut star_pick = pick;
         self.object_on_sky(&chart, &painter);
+        let mut moving = false;
+        if view == View::Horizon {
+            // 候補の中心とクリック地点の両方を風景と照合し、近い実点を優先する。
+            let distance = |q: [f64; 2]| {
+                let xy = frame.to_horizontal(q[0], q[1]).ok()?;
+                let p = chart.point(xy);
+                if opaque(p) {
+                    None
+                } else {
+                    Some(p.distance_sq(click?))
+                }
+            };
+            let star_distance = pick.and_then(|hip| {
+                let s = data.stars.get(*data.by_hip.get(&hip)?)?;
+                distance([f64::from(s.ra_deg), f64::from(s.dec_deg)])
+            });
+            let body_distance = body_pick
+                .and_then(|id| distance(bodies.as_ref()?.iter().find(|p| p.id == id)?.equatorial));
+            if body_distance.is_none() {
+                body_pick = None
+            }
+            if star_distance.is_none() {
+                star_pick = None
+            }
+            if matches!((star_distance,body_distance),(Some(a),Some(b)) if a < b && a<=64.) {
+                body_pick = None
+            }
+            let nearest = star_distance
+                .unwrap_or(f32::INFINITY)
+                .min(body_distance.unwrap_or(f32::INFINITY));
+            moving = self.objects.paint_horizon(
+                data,
+                [self.jd, self.latitude, self.longitude],
+                objects::horizon::Canvas {
+                    chart: &chart,
+                    painter: &painter,
+                    pointer,
+                    nearest,
+                    opaque: &opaque,
+                    picking: self.picking,
+                },
+            );
+        }
         if show_landscape {
             self.landscape_render.paint(&painter, rect);
         }
-        if click.is_some() {
+        if pointer.is_some() {
+            if moving {
+                body_pick = None;
+                star_pick = None;
+            }
             self.solar.layers.select(view, body_pick);
-            self.selected = if body_pick.is_some() { None } else { pick };
+            self.selected = if body_pick.is_some() { None } else { star_pick };
             ui.ctx().request_repaint();
         }
     }
