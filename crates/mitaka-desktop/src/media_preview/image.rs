@@ -47,7 +47,16 @@ fn decode(path: &Path, file: std::fs::File, landscape: bool) -> io::Result<image
     if file.metadata()?.len() != meta.len() {
         return Err(invalid("画像の読込中にサイズが変わりました"));
     }
-    let mut reader = ImageReader::new(Cursor::new(&bytes)).with_guessed_format()?;
+    decode_bytes(path, &bytes, landscape, 32768, MAX_PIXELS)
+}
+fn decode_bytes(
+    path: &Path,
+    bytes: &[u8],
+    landscape: bool,
+    max_edge: u32,
+    max_pixels: u64,
+) -> io::Result<image::RgbaImage> {
+    let mut reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
     match reader.format() {
         Some(ImageFormat::Png) if bytes.ends_with(b"\0\0\0\0IEND\xaeB\x60\x82") => {}
         Some(ImageFormat::Jpeg) if bytes.ends_with(&[0xff, 0xd9]) => {}
@@ -67,12 +76,12 @@ fn decode(path: &Path, file: std::fs::File, landscape: bool) -> io::Result<image
         _ => return Err(invalid("完全な PNG または JPEG 画像を選択してください")),
     }
     let mut limits = Limits::default();
-    limits.max_image_width = Some(32768);
-    limits.max_image_height = Some(32768);
+    limits.max_image_width = Some(max_edge);
+    limits.max_image_height = Some(max_edge);
     reader.limits(limits);
     let mut decoder = reader.into_decoder().map_err(io::Error::other)?;
     let (w, h) = decoder.dimensions();
-    if w == 0 || h == 0 || u64::from(w) * u64::from(h) > MAX_PIXELS {
+    if w == 0 || h == 0 || u64::from(w) * u64::from(h) > max_pixels {
         return Err(invalid("画像の画素数が上限を超えました"));
     }
     let orientation = decoder.orientation().map_err(io::Error::other)?;
@@ -93,11 +102,22 @@ pub fn load(path: &Path) -> io::Result<egui::ColorImage> {
     load_selected(path, std::fs::File::open(path)?)
 }
 pub fn load_selected(path: &Path, file: std::fs::File) -> io::Result<egui::ColorImage> {
-    let image = decode(path, file, false)?;
-    Ok(egui::ColorImage::from_rgba_unmultiplied(
+    Ok(color_image(decode(path, file, false)?))
+}
+pub(crate) fn document_image(
+    path: &Path,
+    bytes: &[u8],
+    max_pixels: u64,
+) -> io::Result<egui::ColorImage> {
+    Ok(color_image(decode_bytes(
+        path, bytes, false, 2048, max_pixels,
+    )?))
+}
+fn color_image(image: image::RgbaImage) -> egui::ColorImage {
+    egui::ColorImage::from_rgba_unmultiplied(
         [image.width() as usize, image.height() as usize],
         &image,
-    ))
+    )
 }
 
 pub struct Preview {

@@ -2,7 +2,7 @@ mod document;
 mod run;
 
 use self::{
-    document::{Document, Piece},
+    document::{Document, Tag},
     run::{Event, Run},
 };
 use super::App;
@@ -418,7 +418,7 @@ impl App {
             .show(ctx, |ui| {
                 ui.label(doc.path().display().to_string());
                 if doc.styles {
-                    ui.label("文書のスタイルが表示に影響するため、Lua リンクを無効にしています。");
+                    ui.label("この文書には表示を確認できない指定があるため、Lua リンクを無効にしています。");
                 } else {
                     ui.checkbox(
                         &mut doc.trusted,
@@ -429,41 +429,10 @@ impl App {
                 egui::ScrollArea::vertical()
                     .max_height(450.)
                     .show(ui, |ui| {
-                        for (bi, block) in doc.blocks.iter().enumerate() {
-                            ui.horizontal_wrapped(|ui| {
-                                for (pi, part) in block.parts.iter().enumerate() {
-                                    match part {
-                                        Piece::Text(text) if block.heading => {
-                                            ui.heading(text);
-                                        }
-                                        Piece::Text(text) => {
-                                            ui.label(text);
-                                        }
-                                        Piece::Link {
-                                            label,
-                                            can_run: true,
-                                            ..
-                                        } => {
-                                            let enabled = doc.trusted && self.scripts.job.is_none();
-                                            if ui
-                                                .add_enabled(enabled, egui::Link::new(label))
-                                                .clicked()
-                                            {
-                                                clicked = Some((bi, pi));
-                                            }
-                                        }
-                                        Piece::Link { label, .. } => {
-                                            if ui
-                                                .link(label)
-                                                .on_hover_text("このリンクは移動・実行できません")
-                                                .clicked()
-                                            {
-                                                revoked = true;
-                                            }
-                                        }
-                                    }
-                                }
-                            });
+                        match doc.draw(ui,self.scripts.job.is_none()) {
+                            Some(Tag::Action(bi,pi))=>clicked=Some((bi,pi)),
+                            Some(Tag::Revoke)=>revoked=true,
+                            None=>{},
                         }
                     });
             });

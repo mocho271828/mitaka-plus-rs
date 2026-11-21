@@ -2784,6 +2784,7 @@ dependencies = [
  "cap-std",
  "chrono",
  "command-group",
+ "cssparser 0.35.0",
  "dirs",
  "eframe",
  "encoding_rs",
