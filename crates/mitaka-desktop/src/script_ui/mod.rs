@@ -124,7 +124,7 @@ impl App {
 
     fn script_message(&mut self, msg: &Value, ctx: &egui::Context) -> Result<Value, String> {
         match msg["op"].as_str() {
-            Some("snapshot") => Ok(json!({
+            Some("snapshot") => Ok(self.options.layers.snapshot(json!({
                 "ok":true,
                 "jd":self.jd,
                 "lines":self.options.lines,
@@ -145,7 +145,7 @@ impl App {
                 "placeSetting":self.settings,
                 "scriptOutput":self.scripts.panel,
                 "dualScreen":self.projector.open,
-            })),
+            }))),
             Some("apply") => {
                 match msg["kind"].as_u64() {
                     Some(kind @ (0 | 2 | 19 | 20 | 72..=78)) => self.time_action(kind, msg)?,
@@ -186,6 +186,7 @@ impl App {
                         self.options.labels =
                             msg["enabled"].as_bool().ok_or("labels は真偽値です")?
                     }
+                    Some(kind) if self.options.layers.action(kind, msg)? => {}
                     _ => return Err("この画面では未対応の Lua 操作です".into()),
                 }
                 Ok(json!({"ok":true}))

@@ -7,6 +7,7 @@ use std::{
 };
 
 pub struct SkyData {
+    pub layers: crate::layers::catalog::LayersCatalog,
     pub root: PathBuf,
     pub date_range: [f64; 2],
     pub stars: Vec<Star>,
@@ -56,6 +57,7 @@ impl SkyData {
             return Err(io::Error::other("暦表と月位置計算の有効範囲が重なりません"));
         }
         Ok(Self {
+            layers: crate::layers::catalog::LayersCatalog::load(root, &constellations),
             date_range,
             root: root.to_path_buf(),
             stars,
