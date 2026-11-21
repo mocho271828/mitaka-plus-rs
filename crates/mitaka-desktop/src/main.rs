@@ -5,6 +5,7 @@ mod commands;
 mod fonts;
 mod galaxies;
 mod projection;
+mod script_ui;
 mod session;
 mod session_ui;
 mod smoke;
@@ -71,6 +72,7 @@ impl Args {
     }
 }
 struct App {
+    scripts: script_ui::Scripts,
     session: session::Session,
     data: Option<SkyData>,
     solar: solar::Solar,
@@ -107,6 +109,7 @@ impl App {
         let menus = Menus::new(cc)?;
         Ok(Self {
             data: initial,
+            scripts: Default::default(),
             session: Default::default(),
             solar: Default::default(),
             surface: None,
@@ -176,9 +179,12 @@ impl App {
             }
         }
     }
-    fn execute(&mut self, command: Command) {
+    fn execute(&mut self, command: Command, ctx: &egui::Context) {
         match command {
             Command::Open => self.open(),
+            Command::RunScript => self.script_file(ctx),
+            Command::ScriptPanel => self.scripts.panel = true,
+            Command::LocalHtml => self.open_script_html(),
             Command::LoadState => self.session_dialog(false),
             Command::SaveState => self.session_dialog(true),
             Command::Sky => self.view = View::Sky,
@@ -498,13 +504,14 @@ impl App {
 }
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+        self.scripts_frame(ctx);
         for command in self.menus.poll(ctx) {
-            self.execute(command);
+            self.execute(command, ctx);
         }
         if !ctx.wants_keyboard_input() {
             for (key, command) in [(Key::F, Command::Search), (Key::O, Command::Open)] {
                 if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, key)) {
-                    self.execute(command);
+                    self.execute(command, ctx);
                 }
             }
         }
