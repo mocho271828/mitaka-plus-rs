@@ -174,11 +174,7 @@ impl View {
             camera_axes.y_axis + camera_axes.z_axis * tangent,
             -camera_axes.y_axis + camera_axes.z_axis * tangent,
         ];
-        let near = if camera.frame.is_some() && !camera.frame_is_orbit {
-            1e-12
-        } else {
-            camera.distance * 1e-4
-        };
+        let near = camera.near_plane();
         Self {
             eye: local,
             camera_axes,

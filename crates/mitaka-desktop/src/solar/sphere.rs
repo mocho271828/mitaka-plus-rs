@@ -96,6 +96,7 @@ pub struct Surfaces {
     pub(super) mode: Amplification,
     pub(super) preview: bool,
     drawn: Vec<usize>,
+    symbols: Vec<(Pos2, f32, f64)>,
     pub clouds: bool,
     pub lights: bool,
     pub eclipse: mitaka_core::eclipse::display::Options,
@@ -138,14 +139,33 @@ impl Surfaces {
     }
     pub(super) fn begin_frame(&mut self) {
         self.drawn.clear();
+        self.symbols.clear();
+    }
+    pub(crate) fn symbol(&mut self, at: Pos2, radius: f32, depth: f64) {
+        self.symbols.push((at, radius, depth));
     }
     pub(super) fn opaque_at(&self, p: Pos2) -> bool {
         self.depth_at(p).is_finite()
+    }
+    pub(crate) fn intersects_depth(&self, rect: Rect) -> bool {
+        self.drawn
+            .iter()
+            .any(|key| self.cache[key].0.tile.intersects(rect))
+            || self
+                .symbols
+                .iter()
+                .any(|(p, r, _)| rect.distance_sq_to_pos(*p) <= r * r)
     }
     pub(crate) fn depth_at(&self, p: Pos2) -> f64 {
         self.drawn
             .iter()
             .map(|&id| self.body_depth_at(id, p))
+            .chain(
+                self.symbols
+                    .iter()
+                    .filter(|(pos, r, _)| pos.distance_sq(p) <= r * r)
+                    .map(|(_, _, d)| *d),
+            )
             .fold(f64::INFINITY, f64::min)
     }
     pub(super) fn body_depth_at(&self, id: usize, p: Pos2) -> f64 {
