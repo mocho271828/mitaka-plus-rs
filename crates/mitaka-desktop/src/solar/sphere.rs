@@ -59,25 +59,6 @@ fn uv(normal: Point, axes: [Point; 3], offset: f64) -> (f64, f64) {
         dot(normal, axes[2]).clamp(-1., 1.).acos() / std::f64::consts::PI,
     )
 }
-fn solar_visibility(
-    receiver: Point,
-    sun: Point,
-    occultor: Point,
-    occ_radius: f64,
-) -> io::Result<f64> {
-    let sun = mitaka_core::eclipse::Sphere {
-        center_au: sun,
-        radius_au: RADII_KM[0] / AU_KM,
-    };
-    let occ = mitaka_core::eclipse::Sphere {
-        center_au: occultor,
-        radius_au: occ_radius,
-    };
-    if length(minus(sun.center_au, receiver)) <= length(minus(occ.center_au, receiver)) {
-        return Ok(1.);
-    }
-    Ok(1. - mitaka_core::eclipse::surface_sample(sun, occ, receiver)?.obscured_fraction)
-}
 use mitaka_core::atmosphere::{self, EmissionMap, Parameters, Ray};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Air {
@@ -112,7 +93,7 @@ pub struct Surfaces {
     cache: HashMap<usize, (Key, TextureHandle)>,
     pub clouds: bool,
     pub lights: bool,
-    pub eclipse: bool,
+    pub eclipse: mitaka_core::eclipse::display::Options,
     pub air: Air,
     pub intensity: f64,
     emission: Option<Result<EmissionMap, String>>,
@@ -125,7 +106,7 @@ struct Key {
     tile: Rect,
     clouds: bool,
     lights: bool,
-    eclipse: bool,
+    eclipse: mitaka_core::eclipse::display::Options,
     air: Air,
     intensity: f64,
 }
@@ -135,7 +116,7 @@ impl Surfaces {
             clouds: true,
             lights: false,
             intensity: 6.0,
-            eclipse: true,
+            eclipse: Default::default(),
             ..Default::default()
         }
     }
@@ -260,6 +241,7 @@ fn rasterize(
     let w = (tile.width() * sampling).ceil().max(1.) as usize;
     let h = (tile.height() * sampling).ceil().max(1.) as usize;
     let mut pixels = vec![0; w * h * 4];
+    let eclipse = super::eclipse::surface(scene, index, key.eclipse)?;
     let mut atmosphere = match (key.air, index) {
         (Air::None, _) => None,
         (_, 3) => Some(Parameters::earth()),
@@ -309,25 +291,24 @@ fn rasterize(
             if let Some(normal) = ground {
                 let (u, v) = uv(normal, axes, offset);
                 let cosine = dot(normal, sunlight);
-                let mut light = if index == 0 {
+                let light = if index == 0 {
                     1.
                 } else {
                     0.3 + 0.7 * cosine.max(0.)
                 };
-                if key.eclipse && (index == 3 || index == 10) {
-                    let occ = if index == 3 { 10 } else { 3 };
-                    let p = plus(center, scale(normal, radius));
-                    light *= solar_visibility(
-                        p,
-                        scene.bodies[0],
-                        scene.bodies[occ],
-                        RADII_KM[occ] / AU_KM,
-                    )?;
-                }
                 rgb = scale(sample(maps.map, u, v), light);
                 filled = true;
                 if let Some(lights) = maps.lights {
                     rgb = plus(rgb, scale(sample(lights, u, v), gain * (-cosine).max(0.)));
+                }
+                if let Some(binding) = &eclipse {
+                    let footprint = length(minus(eye, normal)) * radius * f64::from(tile.height())
+                        / (h as f64 * focal);
+                    let effect = binding.effect(normal, footprint)?;
+                    rgb = effect
+                        .border_rgb
+                        .map(|b| scale(b, 255.))
+                        .unwrap_or_else(|| std::array::from_fn(|i| rgb[i] * effect.multiplier[i]));
                 }
             }
             if let Some(params) = atmosphere.filter(|_| dot(eye, eye) >= 1.) {
@@ -359,6 +340,12 @@ fn rasterize(
                     sample(cloud, u, v),
                     (0.03 + dot(n, sunlight).max(0.)).min(1.),
                 );
+                let cloud = if let Some(binding) = &eclipse {
+                    let effect = binding.effect(n, 0.)?;
+                    std::array::from_fn(|i| cloud[i] * effect.multiplier[i])
+                } else {
+                    cloud
+                };
                 rgb = plus(rgb, cloud);
                 filled |= cloud.iter().any(|v| *v >= 1.);
             }
@@ -379,18 +366,22 @@ mod tests {
     use super::*;
     #[test]
     fn disk_shadow_range_and_front_back() {
-        assert_eq!(
-            solar_visibility([0.; 3], [1., 0., 0.], [0.5, 0., 0.], 0.01).unwrap(),
-            0.
-        );
-        assert_eq!(
-            solar_visibility([0.; 3], [1., 0., 0.], [2., 0., 0.], 0.01).unwrap(),
-            1.
-        );
-        assert_eq!(
-            solar_visibility([0.; 3], [1., 0., 0.], [0.5, 2., 0.], 0.01).unwrap(),
-            1.
-        );
+        let sun = mitaka_core::eclipse::Sphere {
+            center_au: [1., 0., 0.],
+            radius_au: RADII_KM[0] / AU_KM,
+        };
+        let visible = |center_au| {
+            let occ = mitaka_core::eclipse::Sphere {
+                center_au,
+                radius_au: 0.01,
+            };
+            1. - mitaka_core::eclipse::surface_sample(sun, occ, [0.; 3])
+                .unwrap()
+                .obscured_fraction
+        };
+        assert_eq!(visible([0.5, 0., 0.]), 0.);
+        assert_eq!(visible([2., 0., 0.]), 1.);
+        assert_eq!(visible([0.5, 2., 0.]), 1.);
     }
     #[test]
     fn ray_hits_and_antimeridian_texels_blend() {
