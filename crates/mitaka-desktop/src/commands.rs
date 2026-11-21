@@ -3,6 +3,8 @@ use eframe::egui;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
     Media,
+    Fullscreen,
+    About,
     RunScript,
     ScriptPanel,
     LocalHtml,
@@ -32,6 +34,7 @@ const FILE: &[(Command, &str)] = &[
     (Command::Export, "画像を書き出す…"),
 ];
 const DISPLAY: &[(Command, &str)] = &[
+    (Command::Fullscreen, "全画面表示を切り替える"),
     (Command::Sky, "全天図"),
     (Command::Horizon, "地平図"),
     (Command::Solar, "太陽系 3D"),
@@ -42,7 +45,8 @@ const DISPLAY: &[(Command, &str)] = &[
 ];
 const SETTINGS: &[(Command, &str)] = &[
     (Command::RunScript, "Lua ファイルを実行…"),
-    (Command::ScriptPanel, "Lua の実行・停止…"),
+    (Command::ScriptPanel, "Lua コンソール…"),
+    (Command::About, "Mitaka Plus RS について…"),
     (Command::LocalHtml, "ローカル HTML を開く…"),
     (Command::Settings, "観測・表示設定…"),
     (Command::Reset, "視点をリセット"),
