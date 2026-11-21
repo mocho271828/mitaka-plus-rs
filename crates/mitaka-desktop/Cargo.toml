@@ -24,3 +24,6 @@ muda = "0.15"
 raw-window-handle = "0.6"
 # Windowsの提示経路でもDX12バックエンドを明示する。
 wgpu = { version = "24", default-features = false, features = ["dx12"] }
+
+[dev-dependencies]
+tempfile = "3"
