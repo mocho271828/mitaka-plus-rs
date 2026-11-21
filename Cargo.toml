@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/mitaka-core", "crates/mitaka-script"]
+members = ["crates/mitaka-core", "crates/mitaka-script", "crates/mitaka-desktop"]
 resolver = "3"
 
 [workspace.package]
