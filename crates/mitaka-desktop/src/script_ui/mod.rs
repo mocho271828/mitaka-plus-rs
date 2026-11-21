@@ -462,9 +462,7 @@ impl App {
         self.solar = Default::default();
         self.view = crate::projection::View::Solar;
         let dir = run::scratch()?;
-        let file = local_source(
-            dir.path(),
-            r#"
+        let check = r#"
 Targets.selectMode = 1
 assert(Targets.selectMode == 1)
 Targets.selectMode = 2
@@ -502,8 +500,13 @@ Camera:lookTo('Star.Sirius',0)
 assert(not pcall(function() Camera:setOrient(0,0,0,0) end))
 assert(not pcall(function() Camera:setZoomLogTo(-1,1) end))
 print('camera-check-complete')
-"#,
-        )?;
+"#;
+        let check = if root.join("star_names_HIP.dat").is_file() {
+            std::borrow::Cow::Borrowed(check)
+        } else {
+            std::borrow::Cow::Owned(check.replace("Star.Sirius", "Planet.Mars"))
+        };
+        let file = local_source(dir.path(), check.as_ref())?;
         self.scripts.launch(file, false, root, dir, ctx);
         Ok(())
     }
