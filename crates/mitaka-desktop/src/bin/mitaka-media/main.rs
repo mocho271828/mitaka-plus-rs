@@ -1,3 +1,5 @@
+mod control;
+mod frames;
 mod stream;
 
 use std::{env, error::Error, path::PathBuf};
@@ -11,12 +13,32 @@ use wry::{NewWindowResponse, WebViewBuilder};
 
 fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut args = env::args_os().skip(1);
-    let path = args.next().ok_or("Usage: mitaka-media FILE")?;
+    let first = args.next().ok_or("usage: mitaka-media FILE")?;
+    let inherited = first == "--selected-file";
+    let path = PathBuf::from(if inherited {
+        args.next().ok_or("missing media filename")?
+    } else {
+        first
+    });
     if args.next().is_some() {
-        return Err("expected one local file".into());
+        return Err("unexpected argument".into());
     }
-    let path = PathBuf::from(path);
-    let player = stream::Player::open(&path)?;
+    let player = if inherited {
+        #[cfg(unix)]
+        let owned = {
+            use std::os::fd::AsFd;
+            std::io::stdin().as_fd().try_clone_to_owned()?
+        };
+        #[cfg(windows)]
+        let owned = {
+            use std::os::windows::io::AsHandle;
+            std::io::stdin().as_handle().try_clone_to_owned()?
+        };
+        stream::Player::from_handle(std::fs::File::from(owned), &path)?
+    } else {
+        stream::Player::open(&path)?
+    };
+    println!("{}", player.native);
     let url = player.url.clone();
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
@@ -30,9 +52,8 @@ fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let allowed = url.clone();
     let builder = WebViewBuilder::new()
         .with_incognito(true)
-        .with_autoplay(false)
+        .with_autoplay(true)
         .with_devtools(false)
-        .with_javascript_disabled()
         .with_navigation_handler(move |destination| destination == allowed)
         .with_new_window_req_handler(|_, _| NewWindowResponse::Deny)
         .with_url(url);
