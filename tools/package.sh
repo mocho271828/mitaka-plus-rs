@@ -28,11 +28,12 @@ case "$(uname -s)" in
         for arch in aarch64 x86_64; do
             cargo build --release --locked --workspace --bins --target "$arch-apple-darwin"
         done
-        for binary in mitaka-plus mitaka-script; do
+        for binary in mitaka-plus mitaka-script mitaka-media; do
             lipo -create "$target_dir/aarch64-apple-darwin/release/$binary" "$target_dir/x86_64-apple-darwin/release/$binary" -output "$app/Contents/MacOS/$binary"
         done
         sed "s/@VERSION@/$version/g" packaging/Info.plist > "$app/Contents/Info.plist"
         cp -R "$out/licenses" "$app/Contents/Resources/"
+        codesign --force --sign - "$app/Contents/MacOS/mitaka-media"
         codesign --force --sign - "$app/Contents/MacOS/mitaka-script"
         codesign --force --sign - "$app"
         codesign --verify --strict --deep "$app"
@@ -42,7 +43,7 @@ case "$(uname -s)" in
         cargo build --release --locked --workspace --bins
         root="$out/deb"
         mkdir -p "$root/DEBIAN" "$root/usr/bin" "$root/usr/share/doc/mitaka-plus" "$root/usr/share/applications"
-        install -m 755 "$target_dir/release/mitaka-plus" "$target_dir/release/mitaka-script" "$root/usr/bin/"
+        install -m 755 "$target_dir/release/mitaka-plus" "$target_dir/release/mitaka-script" "$target_dir/release/mitaka-media" "$root/usr/bin/"
         cp -R "$out/licenses" "$root/usr/share/doc/mitaka-plus/"
         cp packaging/mitaka-plus.desktop "$root/usr/share/applications/"
         sed "s/@VERSION@/$version/g" packaging/debian-control > "$root/DEBIAN/control"
@@ -52,7 +53,7 @@ case "$(uname -s)" in
         cargo build --release --locked --workspace --bins
         app="$out/mitaka-plus"
         mkdir -p "$app"
-        cp "$target_dir/release/mitaka-plus.exe" "$target_dir/release/mitaka-script.exe" "$app/"
+        cp "$target_dir/release/mitaka-plus.exe" "$target_dir/release/mitaka-script.exe" "$target_dir/release/mitaka-media.exe" "$app/"
         cp -R "$out/licenses" "$app/"
         archive="$PWD/dist/mitaka-plus-$version-windows-x64.zip"
         (cd "$out" && 7z a -tzip "$archive" mitaka-plus)

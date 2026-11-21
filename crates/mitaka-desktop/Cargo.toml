@@ -11,6 +11,11 @@ name = "mitaka-plus"
 path = "src/main.rs"
 
 [dependencies]
+uuid = { version = "1", features = ["v4"] }
+wry = "0.57.3"
+tao = "0.37"
+tiny_http = "0.12"
+http-range = "0.1"
 scraper = "0.24"
 same-file = "1"
 interprocess = "2.4.9"

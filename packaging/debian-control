@@ -4,5 +4,6 @@ Section: science
 Priority: optional
 Architecture: amd64
 Maintainer: Mitaka Plus RS contributors <mocho271828@users.noreply.github.com>
-Depends: libc6, libgcc-s1, libxkbcommon0, libwayland-client0, libx11-6, libvulkan1, xdg-desktop-portal
+Depends: libc6, libgcc-s1, libxkbcommon0, libwayland-client0, libx11-6, libvulkan1, xdg-desktop-portal, libwebkit2gtk-4.1-0, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good
+Recommends: gstreamer1.0-libav
 Description: Rust desktop viewer for local Mitaka astronomy catalogs

@@ -2,6 +2,7 @@ use eframe::egui;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
+    Media,
     RunScript,
     ScriptPanel,
     LocalHtml,
@@ -23,6 +24,7 @@ pub enum Command {
 }
 
 const FILE: &[(Command, &str)] = &[
+    (Command::Media, "画像・音声・動画を開く…"),
     (Command::Open, "データを開く…"),
     (Command::LoadState, "表示状態を開く…"),
     (Command::SaveState, "表示状態を保存…"),
