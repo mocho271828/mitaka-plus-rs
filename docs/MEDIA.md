@@ -37,4 +37,4 @@ MITAKA_DATA_ROOT=/path/to/resources/data cargo test --locked -p mitaka-desktop n
 MITAKA_TEST_MEDIA_HELPER=/path/to/mitaka-media cargo test --locked -p mitaka-desktop real_player_controls_the_selected_handle -- --ignored
 ```
 
-最後の試験は画面のある環境で6秒の16 kHz PCM WAVを生成します。`MITAKA_TEST_MEDIA_VIDEO` に6秒90フレームの等間隔 MP4 を指定すると動画でも試験します。macOS arm64 の WKWebView では再生・一時停止・3秒へのシーク、PCM 96000フレームとH.264 90フレームを照合しました。Windows と Ubuntu の対話再生および各 OS の音声装置切断時の動作は未検証です。
+最後の試験は画面のある環境で6秒の16 kHz PCM WAVを生成します。`MITAKA_TEST_MEDIA_VIDEO` に6秒90フレームの等間隔 MP4 を指定すると動画でも試験します。macOS arm64 の WKWebView では再生・一時停止・3秒へのシーク、PCM 96000フレームとH.264 90フレームを照合しました。3 OS の CI はデバッグ版と展開した配布版のプレーヤーで同じ WAV の再生位置が進み、一時停止し、48000 フレーム目にシークできることを検査します。Ubuntu では Xvfb と PulseAudio の時間同期付き仮想出力を使い、Windows では WebView2 のテストプロセスで Chromium の仮想音声出力を指定します。実スピーカーへの出力、Windows・Ubuntu での動画のフレームシーク、音声装置切断時の挙動は別途実機確認が必要です。
