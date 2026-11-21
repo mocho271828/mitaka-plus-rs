@@ -137,8 +137,10 @@ mod tests {
             },
         )
         .unwrap();
-        for _ in 0..96000 {
-            writer.write_sample(0_i16).unwrap();
+        for sample in 0..96000 {
+            // 無音検出で物理出力が停止する実装でも、PCMを最後まで処理する入力。
+            let pcm = if sample % 64 < 32 { 32_i16 } else { -32 };
+            writer.write_sample(pcm).unwrap();
         }
         writer.finalize().unwrap();
         let mut cases = vec![(wav, 96000)];
