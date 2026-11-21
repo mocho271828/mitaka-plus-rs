@@ -22,6 +22,7 @@ const HARD_LIMIT: Duration = Duration::from_secs(120);
 
 fn run_script(
     path: &Path,
+    work_dir: Option<&Path>,
     host: Option<&host::SharedHost>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let path = fs::canonicalize(path)?;
@@ -38,7 +39,7 @@ fn run_script(
     if bytes.len() as u64 > SOURCE_LIMIT {
         return Err("script exceeds 1 MiB".into());
     }
-    if let Some(parent) = path.parent() {
+    if let Some(parent) = work_dir.or_else(|| path.parent()) {
         env::set_current_dir(parent)?;
     }
     // 選択されたローカルコードを独立したプロセスで実行する。旧版と同じく
@@ -84,12 +85,14 @@ fn run_script(
 
 struct Options {
     host: Option<OsString>,
+    work_dir: Option<PathBuf>,
     script: PathBuf,
 }
 
 fn options() -> Result<Option<Options>, &'static str> {
     let mut args = env::args_os().skip(1);
     let mut host = None;
+    let mut work_dir = None;
     let mut literal = false;
     while let Some(arg) = args.next() {
         if !literal && arg == "--" {
@@ -98,6 +101,15 @@ fn options() -> Result<Option<Options>, &'static str> {
         }
         if !literal && (arg == "--help" || arg == "-h") {
             return Ok(None);
+        }
+        if !literal && arg == "--working-dir" {
+            if work_dir.is_some() {
+                return Err("duplicate --working-dir");
+            }
+            work_dir = Some(PathBuf::from(
+                args.next().ok_or("missing working directory")?,
+            ));
+            continue;
         }
         if !literal && arg == "--host" {
             if host.is_some() {
@@ -114,6 +126,7 @@ fn options() -> Result<Option<Options>, &'static str> {
         }
         return Ok(Some(Options {
             host,
+            work_dir,
             script: arg.into(),
         }));
     }
@@ -121,7 +134,7 @@ fn options() -> Result<Option<Options>, &'static str> {
 }
 
 fn main() -> ExitCode {
-    let usage = "mitaka-script [--host LOCAL_ENDPOINT] [--] FILE.lua";
+    let usage = "mitaka-script [--host LOCAL_ENDPOINT] [--working-dir DIR] [--] FILE.lua";
     let args = match options() {
         Ok(Some(args)) => args,
         Ok(None) => {
@@ -146,7 +159,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let result = run_script(&args.script, connection.as_ref());
+    let result = run_script(&args.script, args.work_dir.as_deref(), connection.as_ref());
     let error = result.err().map(|e| e.to_string());
     let report: io::Result<()> = match &connection {
         Some(host) => host::complete(

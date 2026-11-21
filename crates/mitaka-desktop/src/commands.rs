@@ -2,6 +2,9 @@ use eframe::egui;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
+    RunScript,
+    ScriptPanel,
+    LocalHtml,
     Open,
     LoadState,
     SaveState,
@@ -33,6 +36,9 @@ const DISPLAY: &[(Command, &str)] = &[
     (Command::Info, "選択天体の情報…"),
 ];
 const SETTINGS: &[(Command, &str)] = &[
+    (Command::RunScript, "Lua ファイルを実行…"),
+    (Command::ScriptPanel, "Lua の実行・停止…"),
+    (Command::LocalHtml, "ローカル HTML を開く…"),
     (Command::Settings, "観測・表示設定…"),
     (Command::Reset, "視点をリセット"),
     (Command::SolarControls, "天体を選択・飛行…"),
