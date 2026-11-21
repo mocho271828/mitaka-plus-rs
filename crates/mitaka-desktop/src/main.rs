@@ -1,8 +1,11 @@
+mod capture;
 mod catalog;
 mod chart;
 mod commands;
 mod fonts;
 mod projection;
+mod solar;
+mod surface;
 
 use crate::{
     catalog::SkyData,
@@ -65,6 +68,10 @@ impl Args {
 }
 struct App {
     data: Option<SkyData>,
+    solar: solar::Solar,
+    surface: Option<surface::Surface>,
+    capture: Option<PathBuf>,
+    canvas_rect: egui::Rect,
     menus: Menus,
     view: View,
     sky: Camera,
@@ -94,6 +101,10 @@ impl App {
         let menus = Menus::new(cc)?;
         Ok(Self {
             data: initial,
+            solar: Default::default(),
+            surface: None,
+            capture: None,
+            canvas_rect: egui::Rect::ZERO,
             menus,
             view: View::Sky,
             sky: Camera::default(),
@@ -121,6 +132,12 @@ impl App {
         }
     }
     fn set_date(&mut self, jd: f64) {
+        if let Some(data) = &self.data {
+            if let Err(err) = data.validate_date(jd) {
+                self.error = Some(err.to_string());
+                return;
+            }
+        }
         if let Some(utc) = utc_date(jd) {
             self.jd = jd;
             self.utc = utc.format("%Y-%m-%d %H:%M:%S").to_string();
@@ -133,7 +150,15 @@ impl App {
         {
             match SkyData::open(&root) {
                 Ok(data) => {
+                    if data.validate_date(self.jd).is_err() {
+                        self.set_date(J2000);
+                    }
                     self.data = Some(data);
+                    self.solar = Default::default();
+                    self.surface = None;
+                    if self.view == View::Surface {
+                        self.view = View::Sky;
+                    }
                     self.selected = None;
                     self.error = None;
                     self.search_message.clear();
@@ -149,7 +174,45 @@ impl App {
             Command::Horizon => self.view = View::Horizon,
             Command::Settings => self.settings = true,
             Command::Search => self.search = true,
+            Command::Solar => self.view = View::Solar,
+            Command::SolarControls => {
+                self.view = View::Solar;
+                self.solar.show_controls = true;
+            }
+            Command::Surface => {
+                let Some(data) = &self.data else {
+                    self.error = Some("天文データを開いてください".into());
+                    return;
+                };
+                let body = if self.view == View::Solar {
+                    self.solar.selected
+                } else {
+                    3
+                };
+                match surface::Surface::load(&data.root, body, self.latitude, self.longitude, 100.)
+                {
+                    Ok(surface) => {
+                        self.surface = Some(surface);
+                        self.view = View::Surface;
+                    }
+                    Err(e) => self.error = Some(e.to_string()),
+                }
+            }
+            Command::Export => {
+                if self.data.is_some() && self.capture.is_none() {
+                    self.capture = rfd::FileDialog::new()
+                        .set_title("表示を画像に保存")
+                        .set_file_name("Mitaka.png")
+                        .add_filter("PNG", &["png"])
+                        .add_filter("JPEG", &["jpg", "jpeg"])
+                        .add_filter("BMP", &["bmp"])
+                        .save_file();
+                }
+            }
+            Command::Info if self.view == View::Solar => self.solar.show_controls = true,
             Command::Info => self.info = true,
+            Command::Reset if self.view == View::Solar => self.solar = Default::default(),
+            Command::Reset if self.view == View::Surface => self.view = View::Solar,
             Command::Reset => *self.camera() = Camera::default(),
         }
     }
@@ -187,11 +250,45 @@ impl App {
         }
         self.options.magnitude = self.options.magnitude.max(star.magnitude);
         self.selected = Some(hip);
+        if matches!(self.view, View::Solar | View::Surface) {
+            self.view = View::Sky;
+        }
         let view = self.view;
         self.camera().center(view, coords);
         self.search_message = format!("HIP {hip} を選択しました");
     }
+    fn capture_frame(&mut self, ctx: &egui::Context) {
+        if self.capture.is_none() {
+            return;
+        }
+        let image = ctx.input(|i| {
+            i.events.iter().find_map(|e| {
+                if let egui::Event::Screenshot { image, .. } = e {
+                    Some(image.clone())
+                } else {
+                    None
+                }
+            })
+        });
+        if let Some(image) = image {
+            if let (Some(path), Some(data)) = (self.capture.take(), self.data.as_ref()) {
+                if let Err(e) = capture::save(
+                    &image,
+                    &path,
+                    &data.root,
+                    self.canvas_rect,
+                    ctx.pixels_per_point(),
+                ) {
+                    self.error = Some(e.to_string());
+                }
+            }
+        } else {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+            ctx.request_repaint();
+        }
+    }
     fn panels(&mut self, ctx: &egui::Context) {
+        self.solar.panel(ctx);
         let mut search = self.search;
         egui::Window::new("恒星を検索")
             .open(&mut search)
@@ -296,6 +393,20 @@ impl App {
             });
             return;
         }
+        self.canvas_rect = ui.available_rect_before_wrap();
+        if self.view == View::Solar {
+            let data = self.data.as_ref().unwrap();
+            if let Err(e) = self.solar.draw(ui, &data.ephemeris, self.jd) {
+                ui.label(e.to_string());
+            }
+            return;
+        }
+        if self.view == View::Surface {
+            if let Some(surface) = &mut self.surface {
+                surface.draw(ui);
+            }
+            return;
+        }
         let (response, painter) =
             ui.allocate_painter(ui.available_size(), egui::Sense::click_and_drag());
         let rect = response.rect;
@@ -365,13 +476,19 @@ impl eframe::App for App {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(Color32::from_rgb(6, 11, 18)))
             .show(ctx, |ui| self.canvas(ui));
-        self.panels(ctx);
+        self.capture_frame(ctx);
+        if self.capture.is_none() {
+            self.panels(ctx);
+        }
         if let Some(frame) = self.smoke_frames.as_mut() {
             *frame += 1;
             if *frame == 1 {
                 self.view = View::Horizon;
             }
-            if *frame >= 3 {
+            if *frame == 2 {
+                self.view = View::Solar;
+            }
+            if *frame >= 4 {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             } else {
                 ctx.request_repaint();

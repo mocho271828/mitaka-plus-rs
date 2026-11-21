@@ -14,6 +14,20 @@ pub struct SkyData {
     pub ephemeris: Cf96Ephemeris,
 }
 impl SkyData {
+    pub fn validate_date(&self, jd: f64) -> io::Result<()> {
+        if !(mitaka_core::lunar::LUNAR_MINIMUM_JD..=mitaka_core::lunar::LUNAR_MAXIMUM_JD)
+            .contains(&jd)
+        {
+            return Err(io::Error::other("日時が月位置計算の有効範囲外です"));
+        }
+        for i in 0..9 {
+            let [lo, hi] = self.ephemeris.time_range(i)?;
+            if !(lo..=hi).contains(&jd) {
+                return Err(io::Error::other("日時がCF96暦表の有効範囲外です"));
+            }
+        }
+        Ok(())
+    }
     pub fn open(root: &Path) -> io::Result<Self> {
         let stars = catalog::load_hipparcos(&root.join("hip.dat"))?;
         if stars.is_empty() || stars.iter().any(|s| !(-90. ..=90.).contains(&s.dec_deg)) {
@@ -32,6 +46,9 @@ impl SkyData {
             result => result?,
         };
         let ephemeris = Cf96Ephemeris::load(&root.join("cf96.dat"))?;
+        if ephemeris.planet_count() != 9 {
+            return Err(io::Error::other("CF96は9天体を必要とします"));
+        }
         Ok(Self {
             root: root.to_path_buf(),
             stars,

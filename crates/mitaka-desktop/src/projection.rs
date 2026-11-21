@@ -3,6 +3,8 @@
 pub enum View {
     Sky,
     Horizon,
+    Solar,
+    Surface,
 }
 
 #[derive(Clone, Copy)]

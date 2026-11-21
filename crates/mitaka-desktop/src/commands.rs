@@ -5,22 +5,32 @@ pub enum Command {
     Open,
     Sky,
     Horizon,
+    Solar,
+    SolarControls,
+    Surface,
+    Export,
     Search,
     Settings,
     Reset,
     Info,
 }
 
-const FILE: &[(Command, &str)] = &[(Command::Open, "データを開く…")];
+const FILE: &[(Command, &str)] = &[
+    (Command::Open, "データを開く…"),
+    (Command::Export, "画像を書き出す…"),
+];
 const DISPLAY: &[(Command, &str)] = &[
     (Command::Sky, "全天図"),
     (Command::Horizon, "地平図"),
+    (Command::Solar, "太陽系 3D"),
     (Command::Search, "恒星を検索…"),
     (Command::Info, "選択天体の情報…"),
 ];
 const SETTINGS: &[(Command, &str)] = &[
     (Command::Settings, "観測・表示設定…"),
     (Command::Reset, "視点をリセット"),
+    (Command::SolarControls, "天体を選択・飛行…"),
+    (Command::Surface, "観測地点の地形を表示…"),
 ];
 const GROUPS: &[(&str, &[(Command, &str)])] =
     &[("ファイル", FILE), ("表示", DISPLAY), ("操作", SETTINGS)];
