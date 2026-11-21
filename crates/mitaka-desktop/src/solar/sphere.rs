@@ -82,7 +82,7 @@ pub struct Region {
     pub tile: Rect,
 }
 struct Buffers<'a> {
-    map: &'a RgbImage,
+    map: Option<&'a RgbImage>,
     emission: Option<&'a EmissionMap>,
     cloud: Option<&'a RgbImage>,
     lights: Option<&'a RgbImage>,
@@ -172,9 +172,10 @@ impl Surfaces {
             self.get("earth_lights", root);
         }
         let get = |name: &str| self.files.get(name).and_then(|v| v.as_ref().ok());
-        let Some(map) = get(NAMES[index]) else {
+        let map = get(NAMES[index]);
+        if map.is_none() && tile != rect {
             return Ok(false);
-        };
+        }
         let key = Key {
             camera,
             jd: scene.jd,
@@ -296,7 +297,16 @@ fn rasterize(
                 } else {
                     0.3 + 0.7 * cosine.max(0.)
                 };
-                rgb = scale(sample(maps.map, u, v), light);
+                rgb = scale(
+                    maps.map.map_or_else(
+                        || {
+                            let c = COLORS[index];
+                            [c.r(), c.g(), c.b()].map(f64::from)
+                        },
+                        |m| sample(m, u, v),
+                    ),
+                    light,
+                );
                 filled = true;
                 if let Some(lights) = maps.lights {
                     rgb = plus(rgb, scale(sample(lights, u, v), gain * (-cosine).max(0.)));

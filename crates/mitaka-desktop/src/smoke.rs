@@ -15,6 +15,7 @@ enum Scene {
     DeepSky,
     Horizon,
     Solar,
+    ReferenceSurface,
     GlobeEarth,
     GlobeMars,
     Earth,
@@ -31,6 +32,7 @@ impl Scene {
             Self::DeepSky => "deep-sky",
             Self::Horizon => "horizon",
             Self::Solar => "solar",
+            Self::ReferenceSurface => "jupiter-surface",
             Self::GlobeEarth => "earth-sphere",
             Self::GlobeMars => "mars-sphere",
             Self::Earth => "earth",
@@ -61,6 +63,7 @@ impl Smoke {
                     Scene::DeepSky,
                     Scene::Horizon,
                     Scene::Solar,
+                    Scene::ReferenceSurface,
                     Scene::GlobeEarth,
                     Scene::GlobeMars,
                     Scene::Earth,
@@ -115,7 +118,17 @@ impl Smoke {
                 app.solar.prepare(&data.ephemeris, app.jd)?;
                 app.view = View::Solar;
             }
+            Scene::ReferenceSurface => {
+                app.view = View::Solar;
+                app.solar.prepare(&data.ephemeris, app.jd)?;
+                app.solar.approach(5)?;
+                app.nonterrain_mode(false, 0., true)?;
+                let ctx_value = serde_json::json!({"duration":0.,"enabled":true,"number":0.});
+                app.camera_action(93, &ctx_value, ctx)
+                    .map_err(io::Error::other)?;
+            }
             Scene::GlobeEarth | Scene::GlobeMars => {
+                app.motion = Default::default();
                 let texture = if scene == Scene::GlobeEarth {
                     "earth.jpg"
                 } else {

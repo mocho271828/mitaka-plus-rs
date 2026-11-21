@@ -18,6 +18,8 @@ pub(super) fn paint(
     rect: Rect,
     c: SolarCamera,
     opts: &crate::layers::LayerOptions,
+    observer: [f64; 2],
+    jd: f64,
 ) {
     let line = |a: Point, b: Point, color| {
         if let (Some((a, _)), Some((b, _))) = (c.project(a, rect), c.project(b, rect)) {
@@ -39,6 +41,72 @@ pub(super) fn paint(
             }
         }
     };
+    use crate::layers::grid::{lines, System};
+    use mitaka_core::astronomy::{equatorial_direction, ObservationFrame};
+    let frame = ObservationFrame::new(observer[0], observer[1], jd).ok();
+    let dir_camera = SolarCamera {
+        frame: Some(c.basis()),
+        distance: 1.,
+        fov: c.fov,
+        ..Default::default()
+    };
+    let eye = c.basis()[2];
+    for (system, enabled, color) in [
+        (
+            System::Equatorial,
+            opts.equatorial,
+            Color32::from_rgb(70, 91, 127),
+        ),
+        (
+            System::Galactic,
+            opts.galactic,
+            Color32::from_rgb(129, 82, 140),
+        ),
+        (
+            System::Horizontal,
+            opts.horizontal,
+            Color32::from_rgb(76, 115, 84),
+        ),
+    ] {
+        if !enabled {
+            continue;
+        }
+        for path in lines(system) {
+            let mut last = None;
+            for &coord in path {
+                let to_screen = || {
+                    let [ra, dec] = if system == System::Horizontal {
+                        frame.as_ref()?.to_equatorial(coord[0], coord[1]).ok()?
+                    } else {
+                        coord
+                    };
+                    let dir =
+                        j2000_equatorial_to_ecliptic(equatorial_direction(ra, dec).ok()?).ok()?;
+                    dir_camera.project(plus(eye, dir), rect).map(|(p, _)| p)
+                };
+                let next = to_screen();
+                if let Some(segment) = last.zip(next).and_then(|(a, b)| clip_line(rect, a, b)) {
+                    p.line_segment(segment, egui::Stroke::new(0.6_f32, color));
+                }
+                last = next;
+            }
+        }
+    }
+    if opts.ecliptic {
+        let color = Color32::from_rgb(150, 116, 61);
+        let corners = [
+            [-100., -100., 0.],
+            [100., -100., 0.],
+            [100., 100., 0.],
+            [-100., 100., 0.],
+            [-100., -100., 0.],
+        ];
+        for pair in corners.windows(2) {
+            line(pair[0], pair[1], color);
+        }
+        line([-100., 0., 0.], [100., 0., 0.], color);
+        line([0., -100., 0.], [0., 100., 0.], color);
+    }
     if opts.circle_scales {
         let au = [1., 10., 100., 1000., 10000.];
         let ly = [

@@ -214,6 +214,14 @@ fn site_target(
 fn angle_lerp(a: f64, b: f64, f: f64) -> f64 {
     a + ((b - a + 180.).rem_euclid(360.) - 180.) * f
 }
+pub(crate) struct ViewSettings<'a> {
+    pub data: &'a crate::catalog::SkyData,
+    pub jd: f64,
+    pub picking: crate::viewer::Picking,
+    pub layers: &'a crate::layers::LayerOptions,
+    pub surface_site: Option<&'a mut crate::camera_control::session::Site>,
+    pub observer: [f64; 2],
+}
 pub struct Solar {
     scene: Option<Scene>,
     pub camera: SolarCamera,
@@ -439,15 +447,18 @@ impl Solar {
             });
         self.show_controls = open;
     }
-    pub fn draw(
-        &mut self,
-        ui: &mut egui::Ui,
-        system: &Cf96Ephemeris,
-        jd: f64,
-        root: &std::path::Path,
-        picking: crate::viewer::Picking,
-        layers: &crate::layers::LayerOptions,
-    ) -> io::Result<()> {
+    pub fn draw(&mut self, ui: &mut egui::Ui, settings: ViewSettings<'_>) -> io::Result<()> {
+        let ViewSettings {
+            data,
+            jd,
+            picking,
+            layers,
+            surface_site,
+            observer,
+        } = settings;
+        let system = &data.ephemeris;
+        let root = &data.root;
+
         self.prepare(system, jd)?;
         if let Some(scene) = self
             .scene
@@ -471,7 +482,24 @@ impl Solar {
             ui.allocate_painter(ui.available_size(), egui::Sense::click_and_drag());
         let rect = response.rect;
         let modifiers = ui.input(|i| i.modifiers);
-        if response.dragged() {
+        let on_surface = surface_site
+            .as_ref()
+            .is_some_and(|s| s.body == self.selected && s.height <= 0.002000001);
+        if response.dragged() && on_surface {
+            let s = surface_site.unwrap();
+            let d = response.drag_delta();
+            if modifiers.alt {
+                s.roll = (s.roll + f64::from(d.x) * 0.35) % 360.;
+            } else {
+                s.heading = (s.heading + f64::from(d.x) * 0.35).rem_euclid(360.);
+                s.elevation = (s.elevation + f64::from(d.y) * 0.35).clamp(-90., 90.);
+            }
+            s.pose(
+                self.body_point(s.body).unwrap().into(),
+                jd,
+                &mut self.camera,
+            )?;
+        } else if response.dragged() {
             self.camera.frame = None;
             self.camera.frame_is_orbit = false;
             self.stop();
@@ -500,7 +528,12 @@ impl Solar {
             });
             if (factor - 1.).abs() > 1e-6 {
                 self.stop();
-                self.camera.distance = (self.camera.distance * f64::from(factor)).clamp(1e-8, 1e12);
+                if on_surface {
+                    self.camera.fov = (self.camera.fov * f64::from(factor)).clamp(0.001, 90.);
+                } else {
+                    self.camera.distance = (self.camera.distance * f64::from(factor))
+                        .clamp(5e-6, 648000. / std::f64::consts::PI * 1e40);
+                }
             }
         }
         if self.tick_surface(jd)? {
@@ -526,7 +559,7 @@ impl Solar {
         } else if self.follow {
             self.camera.target = dest;
         }
-        scales::paint(&painter, rect, self.camera, layers);
+        scales::paint(&painter, rect, self.camera, layers, observer, jd);
         if self.orbits {
             let stroke = Stroke::new(0.7_f32, Color32::from_rgb(59, 77, 100));
             for (i, path) in scene.orbits.iter().enumerate() {
@@ -573,6 +606,9 @@ impl Solar {
             .iter()
             .enumerate()
             .filter_map(|(i, p)| {
+                if on_surface && i == self.selected {
+                    return None;
+                }
                 let p = if i == 10 {
                     plus(
                         scene.bodies[3],
@@ -661,6 +697,19 @@ impl Solar {
             }
         }
         if self.layers.visible {
+            if on_surface {
+                self.surfaces.draw(
+                    &painter,
+                    root,
+                    self.camera,
+                    scene,
+                    self.selected,
+                    sphere::Region {
+                        viewport: rect,
+                        tile: rect,
+                    },
+                )?;
+            }
             self.eclipse_overlay
                 .draw(&painter, rect, scene, self.camera, self.surfaces.eclipse)?;
         }

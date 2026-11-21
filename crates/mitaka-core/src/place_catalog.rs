@@ -16,6 +16,29 @@ pub struct Place {
     pub landscape: Vec<u8>,
 }
 impl Place {
+    fn canonical(&self) -> bool {
+        let mut parts = self.id.split(|b| *b == b'.');
+        let group = parts.next();
+        let object = parts.next();
+        let place = parts.next();
+        let supported = match (group, object) {
+            (Some(b"Planet"), Some(n)) => matches!(
+                n,
+                b"Mercury"
+                    | b"Venus"
+                    | b"Earth"
+                    | b"Mars"
+                    | b"Jupiter"
+                    | b"Saturn"
+                    | b"Uranus"
+                    | b"Neptune"
+                    | b"Pluto"
+            ),
+            (Some(b"Satellite"), Some(b"Moon")) => true,
+            _ => false,
+        };
+        supported && place.is_some_and(|p| !p.is_empty()) && parts.next().is_none()
+    }
     pub fn earth(&self) -> bool {
         self.id
             .strip_prefix(b"Planet.Earth.")
@@ -249,7 +272,7 @@ pub fn parse(bytes: &[u8], limits: CatalogLimits) -> io::Result<PlaceCatalog> {
             Entry::Landscape(l) => result.landscapes.push(l),
             Entry::Group(g) => result.groups.push(g),
             Entry::Place(place) => {
-                if place.earth() {
+                if place.canonical() {
                     if let Some(&i) = by_id.get(&place.id) {
                         result.places[i] = place;
                         continue;
