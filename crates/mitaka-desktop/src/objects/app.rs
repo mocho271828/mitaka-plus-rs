@@ -87,27 +87,45 @@ impl App {
         }
     }
     pub(crate) fn object_in_solar(&mut self, ui: &egui::Ui) {
-        let (Some(c), Some(sky)) = (&self.objects.data, &self.data) else {
-            return;
-        };
+        let Some(sky) = &self.data else { return };
         let rect = self.canvas_rect;
         let click = self.picking.raw_pointer(ui, rect);
-        let scene = super::layers::Overlay {
-            catalog: c,
-            kind: self.objects.kind,
-            active: self.objects.active,
-            options: &self.objects.options,
-            selections: &self.objects.selections,
-            sky,
-            jd: self.jd,
-        };
-        if let Some(i) = scene.draw(ui.painter(), self.solar.camera, rect, click) {
-            self.objects.active = Some(i);
-            if self.picking == crate::viewer::Picking::Click {
-                self.objects.focus_next = true;
-                self.objects.open = true;
+        let mut hit = None;
+        let mut nearest = f32::INFINITY;
+        for kind in [
+            super::Kind::Small,
+            super::Kind::Spacecraft,
+            super::Kind::Satellites,
+        ] {
+            if !self.objects.display.group_visible(kind) {
+                continue;
             }
-            ui.ctx().request_repaint();
+            let Some(c) = self.objects.scene_catalog(kind, &sky.root, ui.ctx()) else {
+                continue;
+            };
+            let scene = super::layers::Overlay {
+                catalog: &c,
+                kind,
+                active: self.objects.active.filter(|_| self.objects.kind == kind),
+                display: &self.objects.display,
+                selections: &self.objects.selections,
+                sky,
+                jd: self.jd,
+            };
+            let paths = scene.permits_paths();
+            if !paths {
+                ui.painter().text(rect.left_top(),egui::Align2::LEFT_TOP,"軌道の標本数が上限を超えました。対象の絞り込み、または標本数の変更が必要です。",egui::FontId::proportional(12.),Color32::YELLOW);
+            }
+            if let Some((i, d)) = scene.draw(ui.painter(), self.solar.camera, rect, click, paths) {
+                if d < nearest {
+                    nearest = d;
+                    hit = Some((kind, i, c));
+                }
+            }
+        }
+        if let Some((kind, i, c)) = hit {
+            self.objects
+                .select_scene(kind, i, c, self.picking == crate::viewer::Picking::Click);
         }
     }
 }

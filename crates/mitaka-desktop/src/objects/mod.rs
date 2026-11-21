@@ -1,6 +1,7 @@
 //! 出典ごとの行番号を保って天体を検索する。ヘッダ・欠測の有無はカタログごとに異なる。
 mod app;
 mod catalog;
+pub(crate) mod display;
 mod layers;
 mod satellite;
 pub(crate) mod selections;
@@ -8,9 +9,13 @@ mod spacecraft;
 use crate::catalog::SkyData;
 use catalog::{error, Catalog};
 use eframe::egui;
-use std::{io, path::PathBuf, sync::mpsc};
+use std::{
+    io,
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default)]
 enum Kind {
     #[default]
     Stars,
@@ -73,8 +78,9 @@ pub(crate) struct Browser {
     pub(crate) selections: selections::Selections,
     kind: Kind,
     root: Option<PathBuf>,
-    data: Option<Catalog>,
-    pending: Option<mpsc::Receiver<io::Result<Catalog>>>,
+    data: Option<Rc<Catalog>>,
+    loading: bool,
+    catalogs: display::Catalogs,
     query: String,
     filtered: Option<Vec<usize>>,
     active: Option<usize>,
@@ -83,7 +89,7 @@ pub(crate) struct Browser {
     error: Option<String>,
     follow: bool,
     focus_next: bool,
-    options: layers::Options,
+    pub(crate) display: display::Display,
 }
 impl Browser {
     fn load(&mut self, root: PathBuf, ctx: &egui::Context) {
@@ -94,22 +100,46 @@ impl Browser {
         self.epoch = None;
         self.filtered = None;
         self.error = None;
-        let (tx, rx) = mpsc::channel();
-        self.pending = Some(rx);
-        let ctx = ctx.clone();
-        let kind = self.kind;
-        std::thread::spawn(move || {
-            let result = Catalog::load(kind, &root);
-            let _ = tx.send(result);
-            ctx.request_repaint();
-        });
+        self.loading = true;
+        self.poll(ctx);
+    }
+    fn scene_catalog(
+        &mut self,
+        kind: Kind,
+        root: &Path,
+        ctx: &egui::Context,
+    ) -> Option<Rc<Catalog>> {
+        match self.catalogs.get(kind, root, ctx) {
+            Ok(c) => c,
+            Err(e) => {
+                self.error = Some(e);
+                None
+            }
+        }
+    }
+    fn select_scene(&mut self, kind: Kind, index: usize, c: Rc<Catalog>, open: bool) {
+        if self.kind != kind {
+            self.query.clear();
+            self.filtered = None;
+        }
+        self.kind = kind;
+        self.loading = false;
+        self.data = Some(c);
+        self.active = Some(index);
+        self.epoch = None;
+        self.marker = None;
+        self.open |= open;
+    }
+    pub(crate) fn restore_display(v: &serde_json::Value) -> display::Display {
+        display::Display::restore(v)
     }
     pub(crate) fn inspect_sirius(&mut self, sky: &SkyData) -> io::Result<()> {
         self.inspect(sky, Kind::Stars, "シリウス")
     }
     pub(crate) fn inspect_voyager(&mut self, sky: &SkyData) -> io::Result<()> {
-        self.options.paths = true;
-        self.options.labels = true;
+        self.display.craft = true;
+        self.display.groups[4].paths = true;
+        self.display.groups[4].labels = true;
         self.inspect(sky, Kind::Spacecraft, "Voyager I")
     }
     fn inspect(&mut self, sky: &SkyData, kind: Kind, name: &str) -> io::Result<()> {
@@ -129,33 +159,36 @@ impl Browser {
         self.epoch = None;
         self.follow = true;
         self.open = true;
+        let c = Rc::new(c);
+        self.catalogs.insert(&sky.root, kind, c.clone());
         self.data = Some(c);
         Ok(())
     }
-    fn poll(&mut self) {
-        let Some(rx) = &self.pending else { return };
-        match rx.try_recv() {
-            Ok(Ok(c)) => {
+    fn poll(&mut self, ctx: &egui::Context) {
+        if !self.loading {
+            return;
+        }
+        let Some(root) = self.root.as_deref() else {
+            return;
+        };
+        match self.catalogs.get(self.kind, root, ctx) {
+            Ok(Some(c)) => {
                 self.filtered = c.search(&self.query);
                 self.data = Some(c);
-                self.pending = None;
+                self.loading = false;
             }
-            Ok(Err(e)) => {
-                self.error = Some(e.to_string());
-                self.pending = None;
+            Ok(None) => {}
+            Err(e) => {
+                self.error = Some(e);
+                self.loading = false;
             }
-            Err(mpsc::TryRecvError::Disconnected) => {
-                self.error = Some("カタログ読込スレッドが終了しました".into());
-                self.pending = None;
-            }
-            Err(mpsc::TryRecvError::Empty) => {}
         }
     }
     fn panel(&mut self, ctx: &egui::Context, sky: &SkyData, epoch: [f64; 3]) -> Option<Position> {
         if self.open && self.root.as_ref() != Some(&sky.root) {
             self.load(sky.root.clone(), ctx);
         }
-        self.poll();
+        self.poll(ctx);
         let mut open = self.open;
         let mut apply = std::mem::take(&mut self.focus_next);
         egui::Window::new("天体ブラウザ")
@@ -163,7 +196,7 @@ impl Browser {
             .default_width(420.)
             .show(ctx, |ui| {
                 let before = self.kind;
-                ui.add_enabled_ui(self.pending.is_none(), |ui| {
+                ui.add_enabled_ui(!self.loading, |ui| {
                     egui::ComboBox::from_label("カタログ")
                         .selected_text(self.kind.label())
                         .show_ui(ui, |ui| {
@@ -176,7 +209,7 @@ impl Browser {
                     self.query.clear();
                     self.load(sky.root.clone(), ctx);
                 }
-                if self.pending.is_some() {
+                if self.loading {
                     ui.spinner();
                     ui.label("カタログを読み込んでいます");
                     return;
@@ -216,23 +249,7 @@ impl Browser {
                             }
                         });
                     if matches!(self.kind, Kind::Spacecraft | Kind::Satellites | Kind::Small) {
-                        ui.horizontal(|ui| {
-                            ui.checkbox(&mut self.options.points, "点");
-                            ui.checkbox(&mut self.options.labels, "名称");
-                            if self.kind != Kind::Satellites {
-                                ui.checkbox(
-                                    &mut self.options.paths,
-                                    if self.kind == Kind::Spacecraft {
-                                        "PTH 軌跡"
-                                    } else {
-                                        "選択天体の軌道"
-                                    },
-                                );
-                            }
-                        });
-                        if self.options.paths && self.kind == Kind::Small {
-                            ui.label("楕円小惑星は1周、彗星は表示日時の前後90日");
-                        }
+                        self.display.ui(ui);
                     }
                     if let Some(i) = self.active {
                         ui.separator();
@@ -388,12 +405,12 @@ mod tests {
                     );
                 }
                 Kind::Small => {
-                    let path = c.small_path(i, crate::J2000).unwrap();
-                    assert_eq!(path.len(), 181);
-                    let points: Vec<_> = path.into_iter().collect::<Option<_>>().unwrap();
+                    let path = c.small_path(i, display::Sampling::default()).unwrap();
+                    assert_eq!(path.len(), 201);
+                    let points: Vec<_> = path.iter().copied().collect::<Option<_>>().unwrap();
                     assert!(points[0]
                         .iter()
-                        .zip(points[180])
+                        .zip(*points.last().unwrap())
                         .all(|(a, b)| (a - b).abs() < 1e-9));
                 }
                 _ => {}

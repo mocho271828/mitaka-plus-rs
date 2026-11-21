@@ -78,6 +78,7 @@ impl App {
             self.solar.selected
         });
         self.objects.selections.apply_to(v);
+        self.objects.display.store(v);
         let layers = &self.solar.layers;
         v["planets"]["visible"] = json!(layers.visible);
         v["planets"]["labels"] = json!(layers.labels);
@@ -137,6 +138,7 @@ impl App {
         // 検証と出典照合が全て成功してから、補間を停止して一括適用する。
         self.objects = Default::default();
         self.objects.selections = selections;
+        self.objects.display = crate::objects::Browser::restore_display(v);
         self.scripts.cancel();
         self.options.layers = layers;
         self.terrain_amplification = mitaka_core::terrain::Amplification::from_stage(

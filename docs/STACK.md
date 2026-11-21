@@ -47,7 +47,7 @@
 | 39 | sky-deep-catalogs | ui・全天図のNGC・SDSSと地平姿勢 | 全銀河の密度積算と投影座標の対照 | 600 | implemented |
 | 40 | eclipse-layers | ui・食の境界、本影と半影の円錐 | 旧版の遮蔽物と接線位置の照合 | 550 | implemented |
 | 41 | display-script | adapter・恒星名、星座指定と惑星の表示倍率 | 実Luaとv9の相互運用、異常入力 | 550 | implemented |
-| 42 | object-groups | ui・小天体・衛星・探査機の同時表示と軌道 | 分類・日時・表示状態とLuaの往復を照合 | 700 | not-started |
+| 42 | object-groups | ui・小天体・衛星・探査機の同時表示と軌道 | 分類・日時・表示状態とLuaの往復を照合 | 700 | implemented |
 | 43 | surface-targets | ui・月と9天体の指定地点への飛行 | 体固定座標とv9着陸地点を旧版で照合 | 550 | not-started |
 | 44 | horizon-objects | ui・小天体・探査機の地表視差と注視 | 風景の透過度、選択、旧観測方向を比較 | 500 | not-started |
 | 45 | parity | contract・旧版機能と三OS配布の検証 | 機能別の対応実績、配布物と起動経路を検証 | 機能ごとに分割 | not-started |
