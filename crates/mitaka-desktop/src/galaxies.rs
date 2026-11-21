@@ -1,9 +1,12 @@
 //! カタログ座標と距離をpcで扱う。天の川の簡略表示は原版のpreviewと同じ原座標。
+mod radiative;
 use eframe::egui::{self, Align2, Color32, FontId, Pos2};
+use mitaka_core::galaxy_radiative::RadiativeModel;
 use mitaka_core::{
     extended_catalog::{load_sdss, SdssKind},
     galaxy::{self, OurGalaxyModel},
 };
+use std::sync::Arc;
 use std::{
     io,
     path::{Path, PathBuf},
@@ -63,6 +66,7 @@ impl Object {
     }
 }
 struct Objects {
+    radiation: Option<io::Result<Arc<RadiativeModel>>>,
     rows: Vec<Object>,
     source_rows: usize,
     radius: f64,
@@ -71,6 +75,7 @@ fn objects(kind: Kind, root: &Path) -> io::Result<Objects> {
     let path = root.join(kind.file());
     let mut rows = Vec::new();
     let mut source_rows = 0;
+    let mut radiation = None;
     let mut add = |row: usize, ra: f32, dec: f32, distance: f32, name: Option<String>| {
         source_rows += 1;
         if let Some(p) = galaxy::evaluate_position_pc(ra, dec, distance).position {
@@ -127,6 +132,7 @@ fn objects(kind: Kind, root: &Path) -> io::Result<Objects> {
         }
         Kind::MilkyWay => {
             let model = OurGalaxyModel::load(&path)?;
+            radiation = Some(RadiativeModel::from_model(&model).map(Arc::new));
             for (group, cloud) in model.clouds.into_iter().enumerate() {
                 for (i, position) in cloud.positions_pc.into_iter().enumerate() {
                     source_rows += 1;
@@ -148,6 +154,7 @@ fn objects(kind: Kind, root: &Path) -> io::Result<Objects> {
         .map(|p| p[0].hypot(p[1]).hypot(p[2]))
         .fold(1_f64, f64::max);
     Ok(Objects {
+        radiation,
         rows,
         source_rows,
         radius,
@@ -155,6 +162,8 @@ fn objects(kind: Kind, root: &Path) -> io::Result<Objects> {
 }
 
 pub struct Browser {
+    show_radiation: bool,
+    radiation: radiative::Radiation,
     root: PathBuf,
     kind: Kind,
     objects: Option<Objects>,
@@ -172,6 +181,8 @@ pub struct Browser {
 impl Browser {
     pub fn new(root: PathBuf, ctx: &egui::Context) -> Self {
         let mut result = Self {
+            show_radiation: false,
+            radiation: Default::default(),
             root,
             kind: Kind::MilkyWay,
             objects: None,
@@ -196,6 +207,7 @@ impl Browser {
         let (tx, rx) = mpsc::channel();
         self.pending = Some(rx);
         self.objects = None;
+        self.radiation = Default::default();
         self.error = None;
         self.selected = None;
         self.center = [0.; 3];
@@ -269,6 +281,19 @@ impl Browser {
                 if previous != self.kind {
                     self.load(ctx);
                 }
+                if self.kind == Kind::MilkyWay {
+                    ui.checkbox(&mut self.show_radiation, "銀河の放射・吸収");
+                    if self.show_radiation {
+                        ui.label(format!(
+                            "銀河中心からの視点距離 {:.0} pc",
+                            (40000. / self.zoom).clamp(1., 1e7)
+                        ));
+                        if ui.button("全体を表示").clicked() {
+                            self.zoom = 1.;
+                        }
+                        return;
+                    }
+                }
                 ui.horizontal(|ui| {
                     ui.label("原行番号・名称");
                     let input = ui.text_edit_singleline(&mut self.query);
@@ -329,6 +354,24 @@ impl Browser {
                     )
                 }))
             .clamp(0.05, 1e6);
+        }
+        if self.kind == Kind::MilkyWay && self.show_radiation {
+            match &objects.radiation {
+                Some(Ok(model)) => self
+                    .radiation
+                    .draw(&painter, model, rect, self.yaw, self.pitch, self.zoom),
+                Some(Err(e)) => {
+                    painter.text(
+                        rect.center(),
+                        Align2::CENTER_CENTER,
+                        e.to_string(),
+                        FontId::proportional(14.),
+                        Color32::LIGHT_GRAY,
+                    );
+                }
+                None => {}
+            }
+            return;
         }
         let size = f64::from(rect.width().min(rect.height())) * 0.46 * self.zoom / objects.radius;
         let (sy, cy) = self.yaw.sin_cos();

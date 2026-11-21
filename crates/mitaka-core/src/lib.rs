@@ -10,6 +10,7 @@ pub mod eclipse;
 pub mod ephemeris;
 pub mod extended_catalog;
 pub mod galaxy;
+pub mod galaxy_radiative;
 pub mod lunar;
 pub mod orbit;
 pub mod place_catalog;
