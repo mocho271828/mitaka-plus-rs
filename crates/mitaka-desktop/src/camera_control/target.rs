@@ -42,7 +42,7 @@ impl Object {
                 .body_point(*id)
                 .ok_or_else(|| io::Error::other("太陽系の位置がありません")),
             Self::Place(p) => p.position(solar, jd),
-            Self::Galaxy(target) => Ok(target.pos),
+            Self::Galaxy(target) => Ok(target.pc.map(|v| v * crate::solar::precise::AU_PER_PC)),
             Self::Direction(_) => Err(io::Error::other("この対象には方向のみ指定されています")),
             Self::Hip(hip) => {
                 let s = &sky.stars[sky.by_hip[hip]];
@@ -174,6 +174,11 @@ impl Tracking {
                 }
 
                 app.solar.camera.target = DVec3::from_array(self.from).lerp(p.into(), t).to_array();
+                if let Object::Galaxy(target) = self.object {
+                    if done {
+                        app.solar.camera.set_target_pc(target.pc);
+                    }
+                }
                 if self.last.is_none() {
                     app.solar.camera.distance = self.dist[0] * (1. - t) + self.dist[1] * t;
                 }

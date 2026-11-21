@@ -1,14 +1,11 @@
 //! Galaxy.#と英名は重複を保持して、Plusのカタログから一意な対象のみを選ぶ。
 use crate::catalog::SkyData;
-use mitaka_core::{
-    astronomy::equatorial_direction,
-    galaxy::{self, evaluate_position_pc},
-};
+use mitaka_core::galaxy::{self, evaluate_position_pc};
 use std::io;
 const AU_PC: f64 = 648000. / std::f64::consts::PI;
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Target {
-    pub pos: [f64; 3],
+    pub pc: [f64; 3],
     pub radius: Option<f64>,
 }
 fn fail(s: &str) -> io::Error {
@@ -20,7 +17,7 @@ fn location(ra: f32, dec: f32, dist: f32, radius: f64) -> io::Result<Target> {
         .ok_or_else(|| fail("距離・方向の欠測があります"))?
         .ecliptic;
     Ok(Target {
-        pos: p.map(|v| v * AU_PC),
+        pc: p,
         radius: (radius.is_finite() && radius > 0.).then_some(radius * AU_PC),
     })
 }
@@ -40,7 +37,7 @@ pub(super) fn resolve(name: &str, data: &SkyData) -> io::Result<Target> {
     };
     if name == "Other.SolarSystem" || name == "Other.LSS" {
         return Ok(Target {
-            pos: [0.; 3],
+            pc: [0.; 3],
             radius: Some(if name == "Other.LSS" {
                 1e8 * AU_PC
             } else {
@@ -51,14 +48,8 @@ pub(super) fn resolve(name: &str, data: &SkyData) -> io::Result<Target> {
     if matches!(name, "Other.OurGalaxy" | "Other.OurGalaxyCenter") {
         // 読めない場合に「銀河」を原点に置いてしまうことを避ける。
         galaxy::OurGalaxyModel::load(&data.root.join("ourgalaxy_model.dat"))?;
-        let [x, y, z] = equatorial_direction(
-            (17. + 45. / 60. + 40.0383 / 3600.) * 15.,
-            -(29. + 28.069 / 3600.),
-        )?
-        .map(|v| f64::from(v as f32));
-        let (s, c) = 23.43870583_f64.to_radians().sin_cos();
         return Ok(Target {
-            pos: [x, c * y + s * z, -s * y + c * z].map(|v| v * 8000. * AU_PC),
+            pc: crate::galaxies::center(),
             radius: Some(15000. * AU_PC),
         });
     }
@@ -158,9 +149,9 @@ mod tests {
         ] {
             let a = resolve(alias, &sky).unwrap();
             let b = resolve(key, &sky).unwrap();
-            assert_eq!(a.pos, b.pos);
+            assert_eq!(a.pc, b.pc);
             assert!(a.radius.is_some());
-            assert!(a.pos.iter().any(|v| v.abs() > 1e6));
+            assert!(a.pc.iter().any(|v| v.abs() > 1.));
         }
         assert!(resolve("Galaxy.#N00224", &sky).is_err());
     }

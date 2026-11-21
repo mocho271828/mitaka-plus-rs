@@ -52,7 +52,7 @@
 | 44 | horizon-objects | ui・小天体・探査機の地表視差と注視 | 風景の透過度、選択、旧観測方向を比較 | 500 | implemented |
 | 45 | reproducible-player | infra・再生用WasmのOS間再生成 | Windows改行とmacOS・Linuxの生成バイトを照合 | 150 | implemented |
 | 46 | interplanetary | ui・天体間の飛行 | 旧版の上昇・巡航・下降と衝突中断を比較 | 550 | implemented |
-| 47 | shared-galaxy | ui・太陽系から銀河への共通視点 | SDSS分類、全件選択、v9復元を照合 | 650 | not-started |
+| 47 | shared-galaxy | ui・太陽系から銀河への共通視点 | SDSS分類、全件選択、v9復元を照合 | 650 | implemented |
 | 48 | physical-sky | ui・宇宙・地表の恒星点群 | 同じ視点からの地形・星・星座と遮蔽を比較 | 700 | not-started |
 | 49 | static-html | adapter・信頼したローカルHTMLの静的レイアウト | 表・CSS・リンクをローカル実表示し遷移と再照合を検証 | 450 | not-started |
 | 50 | physical-terrain | ui・地表メッシュを物理カメラに統合 | 地形の交点深度、光源、視点に対する稜線の照合 | 550 | not-started |

@@ -214,7 +214,7 @@ impl App {
                     self.solar = Default::default();
                     self.surface = None;
                     self.galaxies = None;
-                    if matches!(self.view, View::Surface | View::Galaxy) {
+                    if matches!(self.view, View::Surface) {
                         self.view = View::Sky;
                     }
                     self.selected = None;
@@ -270,9 +270,14 @@ impl App {
             Command::Settings => self.settings = true,
             Command::Search => self.search = true,
             Command::Galaxy => {
-                self.view = View::Galaxy;
-                if let Some(g) = &mut self.galaxies {
-                    g.controls = true;
+                self.view = View::Solar;
+                if let Some(data) = &self.data {
+                    let browser = self
+                        .galaxies
+                        .get_or_insert_with(|| galaxies::Browser::new(data.root.clone(), ctx));
+                    self.solar.stop();
+                    self.motion = Default::default();
+                    browser.open(&mut self.solar.camera, self.canvas_rect);
                 }
             }
             Command::Land => {
@@ -380,7 +385,6 @@ impl App {
             Command::Info if self.view == View::Solar => self.solar.show_controls = true,
             Command::Info => self.info = true,
             Command::Reset if self.view == View::Solar => self.solar = Default::default(),
-            Command::Reset if self.view == View::Galaxy => self.galaxies = None,
             Command::Reset if self.view == View::Surface => self.view = View::Solar,
             Command::Reset => *self.camera() = Camera::default(),
         }
@@ -420,7 +424,7 @@ impl App {
         self.options.magnitude = self.options.magnitude.max(star.magnitude);
         self.selected = Some(hip);
         self.solar.layers.select(self.view, None);
-        if matches!(self.view, View::Solar | View::Surface | View::Galaxy) {
+        if matches!(self.view, View::Solar | View::Surface) {
             self.view = View::Sky;
         }
         let view = self.view;
@@ -479,8 +483,13 @@ impl App {
         self.object_panels(ctx);
         self.solar.panel(ctx);
         if let Some(g) = &mut self.galaxies {
-            if self.view == View::Galaxy {
-                g.panel(ctx);
+            if self.view == View::Solar {
+                g.panel(
+                    ctx,
+                    &mut self.solar.camera,
+                    self.canvas_rect,
+                    &mut self.options.layers.deep_sky,
+                );
             }
         }
         let mut search = self.search;
@@ -635,18 +644,6 @@ impl App {
             return;
         }
         self.canvas_rect = ui.available_rect_before_wrap();
-        if self.view == View::Galaxy {
-            let Some(data) = self.data.as_ref() else {
-                return;
-            };
-            let g = self.galaxies.get_or_insert_with(|| {
-                let mut g = galaxies::Browser::new(data.root.clone(), ui.ctx());
-                g.controls = true;
-                g
-            });
-            g.draw(ui, self.picking);
-            return;
-        }
         if self.view == View::Solar {
             if ui.rect_contains_pointer(self.canvas_rect)
                 && ui.input(|i| {
@@ -656,11 +653,15 @@ impl App {
                 self.interrupt_journey();
             }
             let data = self.data.as_ref().unwrap();
+            let galaxies = self
+                .galaxies
+                .get_or_insert_with(|| galaxies::Browser::new(data.root.clone(), ui.ctx()));
             let view = solar::ViewSettings {
                 data,
                 jd: self.jd,
                 picking: self.picking,
                 layers: &self.options.layers,
+                galaxies,
                 surface_site: self.motion.site.as_mut(),
                 observer: [self.latitude, self.longitude],
             };

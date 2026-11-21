@@ -1,7 +1,10 @@
-//! 公式1.3.1の銀河中心座標(pc)で光線を積分する。原点・基底が未確認の点群とは別の視点。
-//! Mitaka_plus f9fe624 OurGalaxyRadiativeRenderer.mm の透視投影・距離によるフェードを参照。
+//! Mitaka_plus f9fe624 OurGalaxyRadiativeRenderer.mm の銀河座標と視線。
+use crate::solar::{precise::AU_PER_PC, SolarCamera};
 use eframe::egui::{self, Color32, ColorImage, Painter, Pos2, Rect, TextureHandle};
+use glam::DVec3;
+use mitaka_core::astronomy::{equatorial_direction, j2000_equatorial_to_ecliptic};
 use mitaka_core::galaxy_radiative::RadiativeModel;
+use std::sync::OnceLock;
 use std::{
     io,
     sync::{
@@ -10,34 +13,67 @@ use std::{
     },
 };
 
+pub(crate) fn center() -> [f64; 3] {
+    let gc = equatorial_direction(
+        (17. + 45. / 60. + 40.0383 / 3600.) * 15.,
+        -(29. + 28.069 / 3600.),
+    )
+    .unwrap()
+    .map(|v| f64::from(v as f32));
+    let [x, y, z] = gc;
+    let (s, c) = 23.43870583_f64.to_radians().sin_cos();
+    [x, c * y + s * z, -s * y + c * z].map(|v| v * 8000.)
+}
+pub(super) fn components(p: [f64; 3]) -> [f64; 3] {
+    static AXES: OnceLock<[DVec3; 3]> = OnceLock::new();
+    let axes = AXES.get_or_init(|| {
+        [DVec3::X, DVec3::Y, DVec3::Z].map(|v| {
+            DVec3::from_array(
+                j2000_equatorial_to_ecliptic(crate::layers::grid::galactic_to_j2000(v.to_array()))
+                    .unwrap(),
+            )
+        })
+    });
+    axes.map(|axis| axis.dot(DVec3::from_array(p)))
+}
+pub(super) fn galactic_view(c: SolarCamera) -> Option<([f32; 3], f32)> {
+    let anchor = c.anchor();
+    let out = c.basis()[2];
+    let eye = std::array::from_fn(|i| {
+        anchor.anchor_pc[i] + anchor.offset_au[i] / AU_PER_PC + c.distance / AU_PER_PC * out[i]
+    });
+    let mut origin = components(eye);
+    origin[0] -= 8000.;
+    if origin.iter().any(|v| v.abs() > 1e7) {
+        return None;
+    }
+    let fade = |r: f32| ((r - 1000.) / 1700.).clamp(0., 1.);
+    let alpha = fade(DVec3::from_array(eye).length() as f32)
+        * fade(DVec3::from_array(origin).length() as f32);
+    (alpha >= 0.02).then_some((origin.map(|v| v as f32), alpha))
+}
 #[derive(Clone, Copy, PartialEq)]
 struct View {
-    yaw: f64,
-    pitch: f64,
-    distance: f64,
+    camera: SolarCamera,
     size: [usize; 2],
+    aspect: f64,
 }
 impl View {
     fn image(self, model: &RadiativeModel, cancel: &AtomicBool) -> io::Result<Option<ColorImage>> {
         let [w, h] = self.size;
-        let (sy, cy) = self.yaw.sin_cos();
-        let (sp, cp) = self.pitch.sin_cos();
-        let right = [cy, sy, 0.];
-        let up = [-sy * sp, cy * sp, cp];
-        let outward = [sy * cp, -cy * cp, sp];
-        let eye = outward.map(|v| (v * self.distance) as f32);
-        let sun = (eye[0] + 8000.).hypot(eye[1]).hypot(eye[2]);
-        let fade = |dist: f32| ((dist - 1000.) / 1700.).clamp(0., 1.);
-        let alpha = fade(sun) * fade(self.distance as f32);
+        let [right, up, outward] = self.camera.basis().map(components);
+        let Some((eye, alpha)) = galactic_view(self.camera) else {
+            return Ok(None);
+        };
         let bg = [0.016, 0.024, 0.043];
-        let tangent = (45_f64.to_radians() / 2.).tan();
+        let tangent = (self.camera.fov.to_radians() / 2.).tan();
         let mut image = ColorImage::new([w, h], Color32::BLACK);
         for y in 0..h {
             if cancel.load(Ordering::Relaxed) {
                 return Ok(None);
             }
             for x in 0..w {
-                let vx = (2. * (x as f64 + 0.5) - w as f64) / h as f64 * tangent;
+                let vx = (2. * (x as f64 + 0.5) - w as f64) / w as f64 * self.aspect * tangent;
                 let vy = (h as f64 - 2. * (y as f64 + 0.5)) / h as f64 * tangent;
                 let rgb = if alpha >= 0.02 {
                     let direction = std::array::from_fn(|axis| {
@@ -72,23 +108,26 @@ pub(super) struct Radiation {
     error: Option<String>,
 }
 impl Radiation {
+    pub(super) fn ready(&self, camera: SolarCamera) -> io::Result<bool> {
+        if let Some(error) = &self.error {
+            return Err(io::Error::other(error.clone()));
+        }
+        Ok(self.pending.is_none() && self.finished.is_some_and(|v| v.camera == camera))
+    }
     pub(super) fn draw(
         &mut self,
         painter: &Painter,
         model: &Arc<RadiativeModel>,
         rect: Rect,
-        yaw: f64,
-        pitch: f64,
-        zoom: f64,
+        camera: SolarCamera,
     ) {
         let scale = (320. / rect.width().max(rect.height()).max(1.)).min(1.);
         let size =
             [rect.width(), rect.height()].map(|v| (v * scale).ceil().clamp(1., 320.) as usize);
         let view = View {
-            yaw,
-            pitch,
-            distance: (40000. / zoom).clamp(1., 1e7),
+            camera,
             size,
+            aspect: f64::from(rect.width()) / f64::from(rect.height().max(1.)),
         };
         if let Some(pending) = &self.pending {
             if pending.view != view {
@@ -141,18 +180,22 @@ impl Radiation {
                 ctx.request_repaint();
             });
         }
-        if let Some(t) = &self.texture {
+        if let Some(t) = self
+            .texture
+            .as_ref()
+            .filter(|_| self.finished == Some(view))
+        {
             painter.image(
                 t.id(),
                 rect,
                 Rect::from_min_max(Pos2::ZERO, egui::pos2(1., 1.)),
                 Color32::WHITE,
             );
-        } else {
+        } else if let Some(error) = &self.error {
             painter.text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
-                self.error.as_deref().unwrap_or("銀河の放射・吸収を計算中…"),
+                error,
                 egui::FontId::proportional(14.),
                 Color32::LIGHT_GRAY,
             );
@@ -169,16 +212,18 @@ mod tests {
         let path = std::path::PathBuf::from(std::env::var_os("MITAKA_DATA_ROOT").unwrap())
             .join("ourgalaxy_model.dat");
         let m = RadiativeModel::from_model(&OurGalaxyModel::load(&path).unwrap()).unwrap();
+        let mut camera = SolarCamera::default();
+        camera.set_target_pc(center());
+        camera.distance = 40000. * AU_PER_PC;
         let mut view = View {
-            yaw: 0.55,
-            pitch: 0.65,
-            distance: 40000.,
+            camera,
             size: [64, 40],
+            aspect: 1.6,
         };
         let flag = AtomicBool::new(false);
         let a = view.image(&m, &flag).unwrap().unwrap();
         assert!(a.pixels.iter().any(|v| v.r() > 60));
-        view.yaw += 0.5;
+        view.camera.yaw += 27.;
         let b = view.image(&m, &flag).unwrap().unwrap();
         assert_ne!(a.pixels, b.pixels);
         flag.store(true, Ordering::Relaxed);

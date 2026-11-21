@@ -5,7 +5,6 @@ pub enum View {
     Horizon,
     Solar,
     Surface,
-    Galaxy,
 }
 
 #[derive(Clone, Copy)]
