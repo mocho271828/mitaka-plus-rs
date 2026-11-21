@@ -59,7 +59,8 @@
 | 51 | horizon-transition | ui・地平図の離着陸と投影の引き継ぎ | 地上の姿勢と視野、切り替え開始・終了を照合 | 500 | implemented |
 | 52 | package-player | infra・各配布物のLuaと音声再生 | ネイティブデコーダーの再生・停止・シークを3 OSで検証 | 200 | implemented |
 | 53 | object-occlusion | ui・軌道・探査機の地形遮蔽 | 旧描画順と地表でのクリック対象を照合 | 300 | implemented |
-| 54 | native-shortcuts | ui・従来のキー操作 | メニューとコマンドから同じ標準操作を実行 | 200 | not-started |
-| 55 | parity | contract・旧版機能と三OS配布の検証 | 機能別の対応実績、配布物と起動経路を検証 | 機能ごとに分割 | not-started |
+| 54 | terrain-revision | ui・飛行中の起伏倍率変更 | 高度と到着時刻を保ち地表からの距離を再評価 | 200 | implemented |
+| 55 | native-shortcuts | ui・従来のキー操作 | メニューとコマンドから同じ標準操作を実行 | 200 | not-started |
+| 56 | parity | contract・旧版機能と三OS配布の検証 | 機能別の対応実績、配布物と起動経路を検証 | 機能ごとに分割 | not-started |
 
 差分が複数のレビュー理由を持つ場合はその単位を分割する。親が変わる場合は先に表を修正し、レビュー指摘は責務を持つ親で直す。CI結果・実機結果・未実装項目を区別する。下位PRから順にレビューし、全機能の実装と検証が揃った時点でマージ作業へ引き継ぐ。

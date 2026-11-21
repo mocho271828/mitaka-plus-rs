@@ -175,8 +175,36 @@ impl App {
         &mut self,
         mode: mitaka_core::terrain::Amplification,
     ) -> std::io::Result<()> {
+        if mode == self.terrain_amplification {
+            return Ok(());
+        }
+        let current = self
+            .motion
+            .site
+            .or(self.solar.flight_site)
+            .filter(|s| self.view == View::Solar && matches!(s.body, 3 | 4));
+        if let Some(s) = current.filter(|s| {
+            self.surface
+                .as_ref()
+                .is_none_or(|g| !s.at_location(g.body, g.lat, g.lon))
+        }) {
+            if let Some(data) = &self.data {
+                self.surface = Some(surface::Surface::load_mode(
+                    &data.root, s.body, s.lat, s.lon, 100., mode,
+                )?);
+            }
+        }
         if let Some(surface) = &mut self.surface {
             surface.set_mode(mode)?;
+            if let Some(s) = self
+                .motion
+                .site
+                .as_mut()
+                .filter(|s| s.at_location(surface.body, surface.lat, surface.lon))
+            {
+                s.update_terrain(surface.landing_height_m(solar::RADII_KM[s.body]) / 1000.);
+            }
+            self.solar.update_ground(surface, self.jd)?;
         }
         self.terrain_amplification = mode;
         Ok(())

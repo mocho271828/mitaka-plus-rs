@@ -33,6 +33,20 @@ impl Site {
             last: None,
         }
     }
+    pub(crate) fn at_location(self, body: usize, lat: f64, lon: f64) -> bool {
+        let delta = (self.lon - lon + 180.).rem_euclid(360.) - 180.;
+        self.body == body
+            && (self.lat - lat).abs() <= 1e-8
+            && (lat.abs() == 90. || delta.abs() <= 1e-8)
+    }
+    pub(crate) fn update_terrain(&mut self, offset_km: f64) {
+        // 地面に立っている場合は新たな高さの2 m上へ移し、上空では地心距離を保つ。
+        if self.height != 0.002 {
+            self.height = (self.height + self.terrain - offset_km).clamp(0.002, 1e9);
+        }
+        self.terrain = offset_km;
+        self.last = None;
+    }
     pub(crate) fn decode(v: &Value) -> io::Result<Option<Self>> {
         let Some(s) = v.get("surface_site") else {
             return Ok(None);
