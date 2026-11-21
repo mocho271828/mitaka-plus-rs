@@ -14,4 +14,5 @@ pub mod orbit;
 pub mod rotation;
 pub mod satellite;
 pub mod satellite_catalog;
+pub mod small_body;
 pub mod terrain;
