@@ -1,13 +1,19 @@
+mod assets;
+mod layout;
+mod style;
+use eframe::egui;
 use encoding_rs::SHIFT_JIS;
 use same_file::Handle;
-use scraper::{ElementRef, Html, Node, Selector};
+use scraper::{ElementRef, Html, Selector};
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
 use std::{
     ffi::OsStr,
     fs::OpenOptions,
     io::{self, Read},
     path::{Path, PathBuf},
 };
+use style::Paint;
 
 const MAX_DOCUMENT: usize = 1024 * 1024;
 const MAX_SCRIPT: usize = 64 * 1024;
@@ -64,30 +70,40 @@ fn read(path: &Path) -> io::Result<(Snapshot, Vec<u8>)> {
     ))
 }
 
-#[derive(Debug, PartialEq)]
-pub enum Piece {
-    Text(String),
+enum Piece {
+    Text(String, Paint),
     Link {
         label: String,
-        url: String,
+        url: Arc<str>,
         can_run: bool,
+        style: Paint,
     },
+    Image(usize, egui::Vec2),
 }
-
-#[derive(Default)]
-pub struct Block {
-    pub heading: bool,
-    pub parts: Vec<Piece>,
+#[derive(PartialEq, Eq, Clone, Copy)]
+struct Cell {
+    table: usize,
+    row: usize,
+    col: usize,
 }
-
+struct Block {
+    heading: u8,
+    cell: Option<Cell>,
+    parts: Vec<Piece>,
+}
+pub(super) enum Tag {
+    Action(usize, usize),
+    Revoke,
+}
 pub struct Document {
     path: PathBuf,
     snapshot: Snapshot,
-    pub blocks: Vec<Block>,
+    blocks: Vec<Block>,
+    paper: egui::Color32,
+    files: assets::Files,
     pub trusted: bool,
     pub styles: bool,
 }
-
 fn hidden(element: ElementRef<'_>) -> bool {
     let e = element.value();
     e.name.ns.as_ref() != "http://www.w3.org/1999/xhtml"
@@ -104,97 +120,24 @@ fn hidden(element: ElementRef<'_>) -> bool {
                 | "noscript"
                 | "canvas"
                 | "select"
+                | "button"
+                | "datalist"
+                | "progress"
+                | "marquee"
+                | "meter"
+                | "video"
+                | "audio"
+                | "map"
                 | "textarea"
                 | "input"
                 | "details"
                 | "dialog"
         )
+        || (e.name() == "fieldset" && e.attr("disabled").is_some())
         || e.attr("hidden").is_some()
         || e.attr("inert").is_some()
         || e.attr("aria-hidden")
             .is_some_and(|v| v.eq_ignore_ascii_case("true"))
-        || e.attr("style").is_some()
-}
-
-fn plain_text(element: ElementRef<'_>, depth: usize, output: &mut String) {
-    if depth > 128 || hidden(element) {
-        return;
-    }
-    for node in element.children() {
-        if let Some(child) = ElementRef::wrap(node) {
-            plain_text(child, depth + 1, output);
-        } else if let Node::Text(t) = node.value() {
-            output.push_str(t);
-        }
-    }
-}
-
-fn line_break(blocks: &mut Vec<Block>) {
-    if blocks.last().is_some_and(|b| !b.parts.is_empty()) {
-        blocks.push(Block::default());
-    }
-}
-
-fn collect(e: ElementRef<'_>, depth: usize, blocks: &mut Vec<Block>, allow_links: bool) {
-    if depth > 128 || hidden(e) {
-        return;
-    }
-    let name = e.value().name();
-    let heading = matches!(name, "h1" | "h2" | "h3" | "h4" | "h5" | "h6");
-    let block = heading
-        || matches!(
-            name,
-            "address"
-                | "blockquote"
-                | "div"
-                | "p"
-                | "pre"
-                | "li"
-                | "tr"
-                | "dt"
-                | "dd"
-                | "section"
-                | "article"
-                | "br"
-                | "hr"
-        );
-    if block {
-        line_break(blocks);
-    }
-    if heading {
-        blocks.last_mut().unwrap().heading = true;
-    }
-    if let ("a", Some(url)) = (name, e.value().attr("href")) {
-        let mut text = String::new();
-        plain_text(e, depth, &mut text);
-        let label = text.split_whitespace().collect::<Vec<_>>().join(" ");
-        if !label.is_empty() {
-            let target = e.value().attr("target").unwrap_or("");
-            let can_run = allow_links
-                && (target.is_empty() || target.eq_ignore_ascii_case("_self"))
-                && e.value().attr("download").is_none()
-                && lua_payload(url).is_ok();
-            blocks.last_mut().unwrap().parts.push(Piece::Link {
-                label,
-                url: url.into(),
-                can_run,
-            });
-        }
-        return;
-    }
-    for child in e.children() {
-        if let Some(node) = ElementRef::wrap(child) {
-            collect(node, depth + 1, blocks, allow_links);
-        } else if let Node::Text(t) = child.value() {
-            let text = t.split_whitespace().collect::<Vec<_>>().join(" ");
-            if !text.is_empty() {
-                blocks.last_mut().unwrap().parts.push(Piece::Text(text));
-            }
-        }
-    }
-    if block {
-        line_break(blocks);
-    }
 }
 
 fn lua_payload(url: &str) -> io::Result<String> {
@@ -230,38 +173,98 @@ fn lua_payload(url: &str) -> io::Result<String> {
     String::from_utf8(bytes).map_err(|_| invalid("Lua リンクは UTF-8 で指定してください"))
 }
 
+fn decode(bytes: &[u8]) -> io::Result<std::borrow::Cow<'_, str>> {
+    std::str::from_utf8(bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes))
+        .map(std::borrow::Cow::Borrowed)
+        .or_else(|_| {
+            SHIFT_JIS
+                .decode_without_bom_handling_and_without_replacement(bytes)
+                .ok_or_else(|| invalid("文書を UTF-8 または CP932 として読めません"))
+        })
+}
 impl Document {
     pub fn open(path: PathBuf) -> io::Result<Self> {
         let (snapshot, bytes) = read(&path)?;
-        let source = std::str::from_utf8(bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&bytes))
-            .map(std::borrow::Cow::Borrowed)
-            .or_else(|_| {
-                SHIFT_JIS
-                    .decode_without_bom_handling_and_without_replacement(&bytes)
-                    .ok_or_else(|| invalid("HTML を UTF-8 または CP932 として読めません"))
-            })?;
-        let html = Html::parse_document(&source);
-        // 外部・埋め込み CSS や base に依存する文書内では、表示されるリンクの状態を本実装で確定できない。
-        let selector = Selector::parse("style, link[rel], base[target], [style]").unwrap();
-        let styles = html.select(&selector).any(|e| {
-            e.value().name() != "link"
-                || e.value().attr("rel").is_some_and(|v| {
-                    v.split_ascii_whitespace()
-                        .any(|s| s.eq_ignore_ascii_case("stylesheet"))
-                })
-        });
-        let mut blocks = vec![Block::default()];
-        collect(html.root_element(), 0, &mut blocks, !styles);
-        blocks.retain(|b| !b.parts.is_empty());
+        let source = decode(&bytes)?;
+        let tree = Html::parse_document(&source);
+        let mut files = assets::Files::new(
+            snapshot
+                .path
+                .parent()
+                .ok_or_else(|| invalid("HTML の親フォルダーがありません"))?,
+        );
+        let mut styles = style::Styles::default();
+        for e in tree.select(&Selector::parse("style,link,base").unwrap()) {
+            if e.ancestors().filter_map(ElementRef::wrap).any(|a| {
+                matches!(
+                    a.value().name(),
+                    "template" | "iframe" | "object" | "noscript"
+                )
+            }) {
+                continue;
+            }
+            if e.value()
+                .attr("type")
+                .is_some_and(|kind| !kind.is_empty() && !kind.eq_ignore_ascii_case("text/css"))
+            {
+                continue;
+            }
+            match e.value().name() {
+                "base" => styles.blocked = true,
+                "style" => {
+                    styles.blocked |= e.value().attr("media").is_some_and(|s| {
+                        !s.eq_ignore_ascii_case("all") && !s.eq_ignore_ascii_case("screen")
+                    });
+                    styles.sheet(&e.text().collect::<String>());
+                }
+                "link"
+                    if e.value().attr("rel").is_some_and(|s| {
+                        s.split_ascii_whitespace()
+                            .any(|t| t.eq_ignore_ascii_case("stylesheet"))
+                    }) =>
+                {
+                    if e.value().attr("disabled").is_some() {
+                        continue;
+                    }
+                    styles.blocked |= e.value().attr("rel").is_some_and(|s| {
+                        s.split_ascii_whitespace()
+                            .any(|v| v.eq_ignore_ascii_case("alternate"))
+                    }) || e.value().attr("media").is_some_and(|s| {
+                        !s.eq_ignore_ascii_case("all") && !s.eq_ignore_ascii_case("screen")
+                    });
+                    match e.value().attr("href").and_then(|s| files.css(s).ok()) {
+                        Some(css) => styles.sheet(&css),
+                        None => styles.blocked = true,
+                    }
+                }
+                _ => {}
+            }
+        }
+        styles.finish();
+        let layout = layout::Layout::build(tree.root_element(), &styles, &mut files);
+        let styles = layout.blocked;
+        let paper = layout.paper;
+        let blocks = layout.blocks;
         Ok(Self {
             path,
             snapshot,
             blocks,
+            files,
+            paper,
             trusted: false,
             styles,
         })
     }
-
+    pub(super) fn draw(&mut self, ui: &mut egui::Ui, ready: bool) -> Option<Tag> {
+        egui::Frame::new()
+            .fill(self.paper)
+            .inner_margin(6)
+            .show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                layout::draw(ui, &self.blocks, &mut self.files, self.trusted && ready)
+            })
+            .inner
+    }
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -282,14 +285,15 @@ impl Document {
             Ok((now, _))
                 if now.path == self.snapshot.path
                     && now.handle == self.snapshot.handle
-                    && now.digest == self.snapshot.digest =>
+                    && now.digest == self.snapshot.digest
+                    && self.files.current() =>
             {
                 lua_payload(url)
             }
             _ => {
                 self.trusted = false;
                 Err(invalid(
-                    "HTML が変更されました。ファイルを開き直してください",
+                    "HTML または CSS が変更されました。文書を開き直してください",
                 ))
             }
         }
@@ -332,11 +336,7 @@ mod tests {
     #[test]
     fn styled_or_replaced_content_loses_execution_access() {
         let (_dir, p) = open("<style>a{display:none}</style><a href='mtkp://x()'>x</a>");
-        assert!(p.styles);
-        assert!(matches!(
-            p.blocks[0].parts[0],
-            Piece::Link { can_run: false, .. }
-        ));
+        assert!(p.blocks.is_empty());
         let (_dir, mut p) = open("<a href='mtkp://x()'>x</a>");
         p.trusted = true;
         let previous = p.path().with_extension("old");
@@ -347,5 +347,140 @@ mod tests {
         assert!(lua_payload("mtkp://%00").is_err());
         assert!(lua_payload("mtkp://%X0").is_err());
         assert_eq!(lua_payload("mtkp://%2520").unwrap(), "%20");
+    }
+}
+
+#[cfg(test)]
+mod render_tests {
+    use super::*;
+    use std::fs;
+
+    fn links(page: &Document) -> Vec<(usize, usize, &str)> {
+        page.blocks
+            .iter()
+            .enumerate()
+            .flat_map(|(b, block)| {
+                block
+                    .parts
+                    .iter()
+                    .enumerate()
+                    .filter_map(move |(p, part)| match part {
+                        Piece::Link {
+                            label,
+                            can_run: true,
+                            ..
+                        } => Some((b, p, label.as_str())),
+                        _ => None,
+                    })
+            })
+            .collect()
+    }
+    #[test]
+    fn css_in_tables_binds_only_a_visible_pointer_click_and_revokes_on_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("panel.html");
+        let css = dir.path().join("panel.css");
+        fs::write(&path,r#"<link rel=stylesheet href=panel.css><body><h2>Catalog</h2><table><tr><th>Name</th><th>Action</th></tr><tr><td></td><td><a href='mtkp://print(42)'>Run</a></td></tr><tr class=gone><td><a href='mtkp://error()'>Hidden</a></td></tr></table><iframe srcdoc="<a href='mtkp://error()'>Frame</a>"></iframe>"#).unwrap();
+        fs::write(
+            &css,
+            "body {color: #fff;background: #234} .gone {display:none} h2 {font-size:24px}",
+        )
+        .unwrap();
+        let mut page = Document::open(path).unwrap();
+        assert!(!page.styles && !page.trusted);
+        assert_eq!(page.paper, egui::Color32::from_rgb(34, 51, 68));
+        assert_eq!(
+            links(&page).iter().map(|t| t.2).collect::<Vec<_>>(),
+            ["Run"]
+        );
+        assert_eq!(page.blocks.iter().filter(|b| b.cell.is_some()).count(), 4);
+        page.trusted = true;
+        let ctx = egui::Context::default();
+        let mut interact = None;
+        let mut frame = |events| {
+            ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(500., 250.),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        interact = page.draw(ui, true);
+                    });
+                },
+            )
+        };
+        frame(vec![]);
+        let view = frame(vec![]);
+        let point = view
+            .shapes
+            .iter()
+            .find_map(|s| match &s.shape {
+                egui::Shape::Text(t) if t.galley.job.text == "Run" => {
+                    Some(t.visual_bounding_rect().center())
+                }
+                _ => None,
+            })
+            .expect("rendered anchor glyphs");
+        for pressed in [true, false] {
+            frame(vec![
+                egui::Event::PointerMoved(point),
+                egui::Event::PointerButton {
+                    pos: point,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]);
+        }
+        let Some(Tag::Action(b, p)) = interact else {
+            panic!("a real click on the label must activate the anchor")
+        };
+        assert_eq!(page.activate(b, p).unwrap(), "print(42)");
+        fs::write(css, "a {display:none}").unwrap();
+        assert!(page.activate(b, p).is_err() && !page.trusted);
+    }
+    #[test]
+    fn unresolved_css_and_unverified_visibility_disable_execution() {
+        for head in [
+            "<link rel=stylesheet href='../a.css'>",
+            "<link rel=stylesheet href='https://invalid.example/style.css'>",
+            "<style>@media(max-width: 500px){a{display:none}}</style>",
+            "<style>a{transform:scale(0)}</style>",
+            "<base target='_blank'>",
+        ] {
+            let d = tempfile::tempdir().unwrap();
+            let p = d.path().join("x.html");
+            fs::write(&p, format!("{head}<a href='mtkp://error()'>a</a>")).unwrap();
+            let page = Document::open(p).unwrap();
+            assert!(page.styles && links(&page).is_empty(), "{head}");
+        }
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("x.html");
+        fs::write(&p,"<body style='background:#000'><div style='opacity:0'><a href='mtkp://x()'>Invisible</a></div><a style='color:#000' href='mtkp://x()'>No contrast</a><span hidden><a href='mtkp://x()'>Hidden</a></span></body>").unwrap();
+        assert!(links(&Document::open(p).unwrap()).is_empty());
+    }
+    #[test]
+    #[ignore = "requires the original Plus 1.5.4 ui/index.html"]
+    fn original_cp932_styled_panel_keeps_the_five_main_frame_actions() {
+        let p = PathBuf::from(std::env::var_os("MITAKA_TEST_HTML").unwrap());
+        let page = Document::open(p).unwrap();
+        assert!(!page.styles && !page.trusted);
+        let labels = links(&page).into_iter().map(|l| l.2).collect::<Vec<_>>();
+        assert_eq!(
+            labels,
+            [
+                "日食の様子",
+                "時間を進める",
+                "時間を戻す",
+                "宇宙・地上を切り替え",
+                "日食の図解"
+            ]
+        );
+        assert_eq!(page.files.images.len(), 3);
     }
 }
