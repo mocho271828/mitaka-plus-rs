@@ -11,6 +11,8 @@ name = "mitaka-plus"
 path = "src/main.rs"
 
 [dependencies]
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp"] }
+tempfile = "3"
 eframe = { version = "0.31.1", default-features = false, features = ["default_fonts", "wgpu", "wayland", "x11"] }
 fontdb = "0.23"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
@@ -24,6 +26,3 @@ muda = "0.15"
 raw-window-handle = "0.6"
 # Windowsの提示経路でもDX12バックエンドを明示する。
 wgpu = { version = "24", default-features = false, features = ["dx12"] }
-
-[dev-dependencies]
-tempfile = "3"
