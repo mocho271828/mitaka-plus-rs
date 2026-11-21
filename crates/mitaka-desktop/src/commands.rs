@@ -3,6 +3,8 @@ use eframe::egui;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
     Open,
+    LoadState,
+    SaveState,
     Sky,
     Horizon,
     Solar,
@@ -18,6 +20,8 @@ pub enum Command {
 
 const FILE: &[(Command, &str)] = &[
     (Command::Open, "データを開く…"),
+    (Command::LoadState, "表示状態を開く…"),
+    (Command::SaveState, "表示状態を保存…"),
     (Command::Export, "画像を書き出す…"),
 ];
 const DISPLAY: &[(Command, &str)] = &[

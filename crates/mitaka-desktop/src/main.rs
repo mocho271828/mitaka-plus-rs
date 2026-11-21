@@ -5,6 +5,8 @@ mod commands;
 mod fonts;
 mod galaxies;
 mod projection;
+mod session;
+mod session_ui;
 mod smoke;
 mod solar;
 mod surface;
@@ -69,6 +71,7 @@ impl Args {
     }
 }
 struct App {
+    session: session::Session,
     data: Option<SkyData>,
     solar: solar::Solar,
     surface: Option<surface::Surface>,
@@ -104,6 +107,7 @@ impl App {
         let menus = Menus::new(cc)?;
         Ok(Self {
             data: initial,
+            session: Default::default(),
             solar: Default::default(),
             surface: None,
             galaxies: None,
@@ -175,6 +179,8 @@ impl App {
     fn execute(&mut self, command: Command) {
         match command {
             Command::Open => self.open(),
+            Command::LoadState => self.session_dialog(false),
+            Command::SaveState => self.session_dialog(true),
             Command::Sky => self.view = View::Sky,
             Command::Horizon => self.view = View::Horizon,
             Command::Settings => self.settings = true,

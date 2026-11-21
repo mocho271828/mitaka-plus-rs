@@ -94,9 +94,9 @@ impl Scene {
 pub struct SolarCamera {
     pub target: Point,
     pub distance: f64,
-    yaw: f64,
-    pitch: f64,
-    roll: f64,
+    pub yaw: f64,
+    pub pitch: f64,
+    pub roll: f64,
 }
 impl Default for SolarCamera {
     fn default() -> Self {
