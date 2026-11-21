@@ -330,7 +330,7 @@ impl Browser {
             });
         self.controls = controls;
     }
-    pub fn draw(&mut self, ui: &mut egui::Ui) {
+    pub fn draw(&mut self, ui: &mut egui::Ui, picking: crate::viewer::Picking) {
         self.collect();
         let Some(objects) = &self.objects else {
             ui.centered_and_justified(|ui| {
@@ -387,7 +387,7 @@ impl Browser {
                 )
         };
         let stride = objects.rows.len().div_ceil(32000).max(1);
-        let pointer = res.clicked().then(|| res.interact_pointer_pos()).flatten();
+        let pointer = picking.pointer(&res);
         let mut best = 64f32;
         for (i, p) in objects.rows.iter().enumerate().step_by(stride) {
             let xy = project(p.position);

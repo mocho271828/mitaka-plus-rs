@@ -75,13 +75,7 @@ impl App {
             return;
         };
         let rect = self.canvas_rect;
-        let click = if ui.rect_contains_pointer(rect)
-            && ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary))
-        {
-            ui.input(|i| i.pointer.interact_pos())
-        } else {
-            None
-        };
+        let click = self.picking.raw_pointer(ui, rect);
         let scene = super::layers::Overlay {
             catalog: c,
             kind: self.objects.kind,
@@ -93,8 +87,10 @@ impl App {
         };
         if let Some(i) = scene.draw(ui.painter(), self.solar.camera, rect, click) {
             self.objects.active = Some(i);
-            self.objects.focus_next = true;
-            self.objects.open = true;
+            if self.picking == crate::viewer::Picking::Click {
+                self.objects.focus_next = true;
+                self.objects.open = true;
+            }
             ui.ctx().request_repaint();
         }
     }
