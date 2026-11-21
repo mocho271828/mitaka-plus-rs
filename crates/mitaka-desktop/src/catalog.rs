@@ -18,6 +18,13 @@ pub struct SkyData {
     pub ephemeris: Cf96Ephemeris,
 }
 impl SkyData {
+    pub fn initial_date(&self, preferred: f64) -> f64 {
+        if self.validate_date(preferred).is_ok() {
+            preferred
+        } else {
+            self.date_range[0]
+        }
+    }
     pub fn validate_date(&self, jd: f64) -> io::Result<()> {
         if !(self.date_range[0]..=self.date_range[1]).contains(&jd) {
             return Err(io::Error::other(
@@ -43,6 +50,23 @@ impl SkyData {
             Err(err) if err.kind() == io::ErrorKind::NotFound => Vec::new(),
             result => result?,
         };
+        for record in &constellations {
+            if !(-90. ..=90.).contains(&record.dec_deg)
+                || record
+                    .boundary
+                    .iter()
+                    .any(|p| !(-90. ..=90.).contains(&p[1]))
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "{}: 星座レコード {} の赤緯が範囲外です",
+                        constellation_file.display(),
+                        record.source_row
+                    ),
+                ));
+            }
+        }
         let ephemeris = Cf96Ephemeris::load(&root.join("cf96.dat"))?;
         if ephemeris.planet_count() != 9 {
             return Err(io::Error::other("CF96は9天体を必要とします"));
@@ -55,7 +79,7 @@ impl SkyData {
             let [lo, hi] = ephemeris.time_range(i)?;
             date_range = [lo.max(date_range[0]), hi.min(date_range[1])];
         }
-        if date_range[0] >= date_range[1] {
+        if date_range[0] > date_range[1] {
             return Err(io::Error::other("暦表と月位置計算の有効範囲が重なりません"));
         }
         Ok(Self {

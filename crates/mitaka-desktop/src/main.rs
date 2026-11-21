@@ -131,6 +131,10 @@ impl App {
     ) -> Result<Self, AppError> {
         fonts::install(&cc.egui_ctx);
         let menus = Menus::new(cc)?;
+        let jd = initial
+            .as_ref()
+            .map_or(J2000, |data| data.initial_date(J2000));
+        let utc = utc_date(jd).ok_or("日時の範囲外です")?;
         let mut media = media_preview::Media::default();
         if let Some(data) = &initial {
             media.reset(&data.root);
@@ -160,7 +164,7 @@ impl App {
             sky: Camera::default(),
             horizon: Camera::default(),
             options: Options::default(),
-            jd: J2000,
+            jd,
             latitude: 35.68,
             longitude: 139.76,
             selected: None,
@@ -171,7 +175,7 @@ impl App {
             about: false,
             search_message: String::new(),
             error,
-            utc: "2000-01-01 12:00:00".into(),
+            utc: utc.format("%Y-%m-%d %H:%M:%S").to_string(),
             smoke,
         })
     }
@@ -233,14 +237,15 @@ impl App {
         {
             match SkyData::open(&root) {
                 Ok(data) => {
-                    if data.validate_date(self.jd).is_err() {
-                        self.set_date(J2000);
-                    }
+                    let jd = data.initial_date(self.jd);
                     self.options.layers.observer.clear();
                     self.options.layers.selected = None;
                     self.options.layers.exceptions.clear();
                     self.media.reset(&data.root);
                     self.data = Some(data);
+                    if jd != self.jd {
+                        self.set_date(jd);
+                    }
                     self.motion = Default::default();
                     self.objects = Default::default();
                     self.solar = Default::default();
@@ -1039,9 +1044,15 @@ fn run() -> Result<(), AppError> {
                 .clone()
                 .unwrap_or_else(|| "--data-root にデータの場所を指定してください".into())
         })?;
-        let state = data.ephemeris.state(0, J2000)?;
+        let jd = data.initial_date(J2000);
+        let state = data.ephemeris.state(0, jd)?;
+        let coordinate = if jd == J2000 {
+            "mercury_j2000_au".into()
+        } else {
+            format!("jd={jd} mercury_au")
+        };
         println!(
-            "stars={} constellations={} mercury_j2000_au={:?}",
+            "stars={} constellations={} {coordinate}={:?}",
             data.stars.len(),
             data.constellations.len(),
             state.position_au
