@@ -90,7 +90,8 @@ struct Buffers<'a> {
 #[derive(Default)]
 pub struct Surfaces {
     files: HashMap<&'static str, Result<RgbImage, String>>,
-    cache: HashMap<usize, (Key, TextureHandle)>,
+    cache: HashMap<usize, (Key, TextureHandle, Vec<bool>)>,
+    drawn: Vec<usize>,
     pub clouds: bool,
     pub lights: bool,
     pub eclipse: mitaka_core::eclipse::display::Options,
@@ -129,6 +130,21 @@ impl Surfaces {
                     .iter()
                     .filter_map(|v| v.as_ref().err().map(String::as_str)),
             )
+    }
+    pub(super) fn begin_frame(&mut self) {
+        self.drawn.clear();
+    }
+    pub(super) fn opaque_at(&self, p: Pos2) -> bool {
+        self.drawn.iter().any(|id| {
+            let (key, image, ground) = &self.cache[id];
+            if !key.tile.contains(p) {
+                return false;
+            }
+            let [w, h] = image.size();
+            let x = (((p.x - key.tile.left()) / key.tile.width()) * w as f32) as usize;
+            let y = (((p.y - key.tile.top()) / key.tile.height()) * h as f32) as usize;
+            ground[y.min(h - 1) * w + x.min(w - 1)]
+        })
     }
     fn get(&mut self, name: &'static str, root: &Path) {
         self.files.entry(name).or_insert_with(|| {
@@ -187,7 +203,7 @@ impl Surfaces {
             air: self.air,
             intensity: self.intensity,
         };
-        if self.cache.get(&index).is_none_or(|(old, _)| old != &key) {
+        if self.cache.get(&index).is_none_or(|(old, _, _)| old != &key) {
             let sources = Buffers {
                 emission: self
                     .emission
@@ -205,14 +221,15 @@ impl Surfaces {
                 10 => mitaka_core::lunar::lunar_orientation(scene.jd)?,
                 _ => mitaka_core::rotation::planet_orientation(index - 1, scene.jd)?,
             };
-            let image = rasterize(&key, scene, index, sources, axes)?;
+            let (image, ground) = rasterize(&key, scene, index, sources, axes)?;
             let tex = painter.ctx().load_texture(
                 format!("planet-{index}"),
                 image,
                 TextureOptions::LINEAR,
             );
-            self.cache.insert(index, (key, tex));
+            self.cache.insert(index, (key, tex, ground));
         }
+        self.drawn.push(index);
         let texture = &self.cache[&index].1;
         painter.image(
             texture.id(),
@@ -229,7 +246,7 @@ fn rasterize(
     index: usize,
     maps: Buffers<'_>,
     axes: [Point; 3],
-) -> io::Result<ColorImage> {
+) -> io::Result<(ColorImage, Vec<bool>)> {
     let tile = key.tile;
     let rect = key.rect;
     let camera = key.camera;
@@ -241,7 +258,8 @@ fn rasterize(
     let sampling = (cap / tile.width().max(tile.height())).min(1.);
     let w = (tile.width() * sampling).ceil().max(1.) as usize;
     let h = (tile.height() * sampling).ceil().max(1.) as usize;
-    let mut pixels = vec![0; w * h * 4];
+    let mut pixels = vec![Color32::TRANSPARENT; w * h];
+    let mut opaque = vec![false; w * h];
     let eclipse = super::eclipse::surface(scene, index, key.eclipse)?;
     let mut atmosphere = match (key.air, index) {
         (Air::None, _) => None,
@@ -360,15 +378,24 @@ fn rasterize(
                 filled |= cloud.iter().any(|v| *v >= 1.);
             }
             if filled {
-                let p = 4 * (y * w + x);
-                for c in 0..3 {
-                    pixels[p + c] = rgb[c].round().clamp(0., 255.) as u8;
-                }
-                pixels[p + 3] = 255;
+                let p = y * w + x;
+                let [r, g, b] = rgb.map(|v| v.round().clamp(0., 255.) as u8);
+                opaque[p] = ground.is_some();
+                pixels[p] = if opaque[p] {
+                    Color32::from_rgb(r, g, b)
+                } else {
+                    Color32::from_rgb_additive(r, g, b)
+                };
             }
         }
     }
-    Ok(ColorImage::from_rgba_unmultiplied([w, h], &pixels))
+    Ok((
+        ColorImage {
+            size: [w, h],
+            pixels,
+        },
+        opaque,
+    ))
 }
 
 #[cfg(test)]
