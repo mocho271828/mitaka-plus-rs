@@ -1,6 +1,7 @@
 //! 出典ごとの行番号を保って天体を検索する。ヘッダ・欠測の有無はカタログごとに異なる。
 mod app;
 mod catalog;
+mod layers;
 mod satellite;
 mod spacecraft;
 use crate::catalog::SkyData;
@@ -79,6 +80,8 @@ pub(crate) struct Browser {
     marker: Option<(String, Position)>,
     error: Option<String>,
     follow: bool,
+    focus_next: bool,
+    options: layers::Options,
 }
 impl Browser {
     fn load(&mut self, root: PathBuf, ctx: &egui::Context) {
@@ -100,17 +103,26 @@ impl Browser {
         });
     }
     pub(crate) fn inspect_sirius(&mut self, sky: &SkyData) -> io::Result<()> {
-        self.kind = Kind::Stars;
+        self.inspect(sky, Kind::Stars, "シリウス")
+    }
+    pub(crate) fn inspect_voyager(&mut self, sky: &SkyData) -> io::Result<()> {
+        self.options.paths = true;
+        self.options.labels = true;
+        self.inspect(sky, Kind::Spacecraft, "Voyager I")
+    }
+    fn inspect(&mut self, sky: &SkyData, kind: Kind, name: &str) -> io::Result<()> {
+        self.kind = kind;
+
         self.root = Some(sky.root.clone());
         let c = Catalog::load(self.kind, &sky.root)?;
-        self.query = "シリウス".to_owned();
+        self.query = name.to_owned();
         self.filtered = c.search(&self.query);
         self.active = Some(
             *self
                 .filtered
                 .as_ref()
                 .and_then(|rows| rows.first())
-                .ok_or_else(|| error("シリウスを検索できません"))?,
+                .ok_or_else(|| error("検証対象の天体を検索できません"))?,
         );
         self.epoch = None;
         self.follow = true;
@@ -143,7 +155,7 @@ impl Browser {
         }
         self.poll();
         let mut open = self.open;
-        let mut apply = false;
+        let mut apply = std::mem::take(&mut self.focus_next);
         egui::Window::new("天体ブラウザ")
             .open(&mut open)
             .default_width(420.)
@@ -201,6 +213,25 @@ impl Browser {
                                 }
                             }
                         });
+                    if matches!(self.kind, Kind::Spacecraft | Kind::Satellites | Kind::Small) {
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut self.options.points, "点");
+                            ui.checkbox(&mut self.options.labels, "名称");
+                            if self.kind != Kind::Satellites {
+                                ui.checkbox(
+                                    &mut self.options.paths,
+                                    if self.kind == Kind::Spacecraft {
+                                        "PTH 軌跡"
+                                    } else {
+                                        "選択天体の軌道"
+                                    },
+                                );
+                            }
+                        });
+                        if self.options.paths && self.kind == Kind::Small {
+                            ui.label("楕円小惑星は1周、彗星は表示日時の前後90日");
+                        }
+                    }
                     if let Some(i) = self.active {
                         ui.separator();
                         ui.label(c.info(i, epoch[0]));
@@ -272,6 +303,8 @@ mod tests {
             (Kind::Galaxies, "1"),
             (Kind::Quasars, "1"),
             (Kind::Satellites, "Phobos"),
+            (Kind::Satellites, "Charon"),
+            (Kind::Satellites, "Nix"),
             (Kind::Small, "Ceres"),
             (Kind::Spacecraft, "Voyager I"),
         ];
@@ -295,6 +328,35 @@ mod tests {
                             .unwrap_err()
                     )
                 });
+            match kind {
+                Kind::Satellites if query == "Charon" => {
+                    assert_eq!(
+                        (0..c.len())
+                            .filter(|&index| c.locate(index, &sky, crate::J2000).is_ok())
+                            .count(),
+                        330
+                    );
+                }
+                Kind::Spacecraft => {
+                    assert_eq!(
+                        (0..c.len())
+                            .filter_map(|index| c.craft_path(index))
+                            .map(<[_]>::len)
+                            .sum::<usize>(),
+                        110_810
+                    );
+                }
+                Kind::Small => {
+                    let path = c.small_path(i, crate::J2000).unwrap();
+                    assert_eq!(path.len(), 181);
+                    let points: Vec<_> = path.into_iter().collect::<Option<_>>().unwrap();
+                    assert!(points[0]
+                        .iter()
+                        .zip(points[180])
+                        .all(|(a, b)| (a - b).abs() < 1e-9));
+                }
+                _ => {}
+            }
             match c.locate(i, &sky, crate::J2000).unwrap() {
                 Position::Sky(p, _) => assert!(p[0].is_finite() && p[1].is_finite()),
                 Position::Solar(p, _) => {

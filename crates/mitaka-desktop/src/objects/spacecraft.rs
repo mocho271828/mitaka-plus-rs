@@ -46,7 +46,7 @@ impl Craft {
             Some((i, title, source))
         })
     }
-    fn trajectory(&self, id: usize) -> io::Result<&Pth> {
+    pub(super) fn trajectory(&self, id: usize) -> io::Result<&Pth> {
         let definition = self.0.sources.get(id).and_then(|s| s.data.as_ref());
         let Some(SourceData::Definition(d)) = definition else {
             return Err(error("探査機の定義がありません"));

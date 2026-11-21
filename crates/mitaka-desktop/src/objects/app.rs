@@ -70,11 +70,31 @@ impl App {
             }
         }
     }
-    pub(crate) fn object_in_solar(&self, ui: &egui::Ui) {
-        if let Some((label, Position::Solar(point, _))) = &self.objects.marker {
-            if let Some((p, _)) = self.solar.camera.project(*point, self.canvas_rect) {
-                marker(ui.painter(), p, label);
-            }
+    pub(crate) fn object_in_solar(&mut self, ui: &egui::Ui) {
+        let (Some(c), Some(sky)) = (&self.objects.data, &self.data) else {
+            return;
+        };
+        let rect = self.canvas_rect;
+        let click = if ui.rect_contains_pointer(rect)
+            && ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary))
+        {
+            ui.input(|i| i.pointer.interact_pos())
+        } else {
+            None
+        };
+        let scene = super::layers::Overlay {
+            catalog: c,
+            kind: self.objects.kind,
+            active: self.objects.active,
+            options: &self.objects.options,
+            sky,
+            jd: self.jd,
+        };
+        if let Some(i) = scene.draw(ui.painter(), self.solar.camera, rect, click) {
+            self.objects.active = Some(i);
+            self.objects.focus_next = true;
+            self.objects.open = true;
+            ui.ctx().request_repaint();
         }
     }
 }

@@ -520,7 +520,7 @@ impl Solar {
     }
 }
 /// 広い視野から極端にズームしても、GPUへ巨大な線座標を渡さない。
-fn clip_line(rect: Rect, a: Pos2, b: Pos2) -> Option<[Pos2; 2]> {
+pub(crate) fn clip_line(rect: Rect, a: Pos2, b: Pos2) -> Option<[Pos2; 2]> {
     let delta = b - a;
     let mut start = 0f32;
     let mut end = 1f32;
