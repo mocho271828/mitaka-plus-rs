@@ -7,3 +7,4 @@ pub mod data_root;
 pub mod ephemeris;
 pub mod lunar;
 pub mod orbit;
+pub mod terrain;
