@@ -19,6 +19,7 @@ pub struct ArtRecord {
 pub struct LayersCatalog {
     pub backgrounds: super::background::Backgrounds,
     pub landscapes: super::landscape::Landscapes,
+    pub known_star_names: HashSet<i32>,
     pub names: HashMap<i32, String>,
     pub featured: HashSet<i32>,
     pub hosts: HashSet<i32>,
@@ -37,6 +38,7 @@ impl LayersCatalog {
         match extended_catalog::load_star_names(&root.join("star_names_HIP.dat")) {
             Ok(rows) => {
                 for row in rows {
+                    out.known_star_names.insert(row.hip);
                     let name = if matches!(row.localized_name_bytes.as_slice(), b"" | b"*") {
                         &row.name_bytes
                     } else {

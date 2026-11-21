@@ -124,6 +124,10 @@ impl App {
 
     fn script_message(&mut self, msg: &Value, ctx: &egui::Context) -> Result<Value, String> {
         match msg["op"].as_str() {
+            Some("constellations") => {
+                let data=self.data.as_ref().ok_or("天文データがありません")?;
+                self.options.layers.constellation_request(&data.constellations,msg)
+            }
             Some("media") => self.media.script(msg, ctx),
             Some("snapshot") => Ok(self.camera_snapshot(self.options.layers.snapshot(json!({
                 "ok":true,
@@ -138,6 +142,9 @@ impl App {
                 "timeInfo":self.playback.show,
                 "realtime":self.playback.realtime,
                 "planetOrbits":self.solar.orbits,
+                "selectedStarNames":self.options.layers.star_selection(self.data.as_ref().map(|d|&d.layers),msg["starHIP"].as_i64()),
+                "radiusScale":self.solar.layers.scales,
+                "radiusScaleMode":u8::from(!self.solar.layers.keep_radius),
                 "planetsVisible":self.solar.layers.visible,
                 "planetLabels":self.solar.layers.labels,
                 "planetAxes":self.solar.layers.axes,
@@ -163,6 +170,17 @@ impl App {
             }
             Some("apply") => {
                 match msg["kind"].as_u64() {
+                    Some(64) => {
+                        self.data.as_ref().ok_or("天文データがありません")?;
+                        self.options.layers.animate_brightness(msg["number"].as_f64().ok_or("明るさが必要です")?,msg["duration"].as_f64().ok_or("秒数が必要です")?, std::time::Instant::now())?;
+                        ctx.request_repaint();
+                    }
+                    Some(kind @ (67|68)) => {
+                        let data=self.data.as_ref().ok_or("天文データがありません")?;
+                        let hips=if kind==67 {Some(msg["hips"].as_array().ok_or("HIP一覧が必要です")?.as_slice())} else {None};
+                        self.options.layers.select_stars(&data.layers,hips,msg["enabled"].as_bool().ok_or("真偽値が必要です")?)?;
+                    }
+                    Some(kind @ (87|88)) => self.solar.layers.scale_action(kind,msg)?,
                     Some(kind @ (3 | 4 | 12 | 89..=105)) => self.camera_action(kind, msg, ctx)?,
                     Some(kind @ (0 | 2 | 19 | 20 | 72..=78)) => self.time_action(kind, msg)?,
                     Some(kind @ (27..=30 | 69 | 70 | 79..=82)) => {
@@ -510,6 +528,38 @@ Camera:setFovTo(45,0);assert(Camera.fov==45)
 Camera:lookTo('Star.Sirius',0)
 assert(not pcall(function() Camera:setOrient(0,0,0,0) end))
 assert(not pcall(function() Camera:setZoomLogTo(-1,1) end))
+local previousBrightness = Stars.brightness
+Stars:setBrightnessTo(0.25,0)
+assert(Stars.brightness==0.25)
+Stars.brightness=previousBrightness
+Stars:select('All')
+if Stars:isSelected('32349') then
+    Stars:deselect('32349 999999')
+    assert(not Stars:isSelected('32349'))
+    Stars:select('32349')
+    assert(Stars:isSelected('32349'))
+end
+assert(not pcall(function() Stars:select('32349 -1') end))
+Constels:show('All')
+if Constels:isVisible('Ori') then
+    Constels:hide('All')
+    Constels:show('Ori')
+    assert(Constels:isVisible('Ori'))
+    Constels:hide('Ori')
+    assert(not Constels:isVisible('Ori'))
+end
+Constels:show('All')
+Planets:setScaleMode(mtk.KEEP_ORBIT)
+Planets:setScale(2,4,3,5)
+local a,b,c,d=Planets:getScale()
+assert(a==2 and b==4 and c==3 and d==5)
+Planets.scaleMode=mtk.KEEP_RADIUS
+assert(Planets:getScaleMode()==mtk.KEEP_RADIUS)
+assert(not pcall(function() Planets:setScale(3,4,1,1) end))
+a,b,c,d=Planets:getScale()
+assert(a==2 and b==4 and c==3 and d==5)
+Planets:setScaleMode(mtk.KEEP_ORBIT)
+Planets:setScale(1,1,1,1)
 print('camera-check-complete')
 "#;
         let check = if root.join("star_names_HIP.dat").is_file() {

@@ -1,5 +1,6 @@
 pub(crate) mod background;
 pub mod catalog;
+mod controls;
 pub(crate) mod grid;
 pub(crate) mod landscape;
 mod render;
@@ -31,6 +32,7 @@ pub struct LayerOptions {
     pub flamsteed: bool,
     pub hip: bool,
     pub brightness: f32,
+    fade: Option<controls::Fade>,
     pub marking: u8,
     pub landscape: bool,
     pub milky_way: background::Mode,
@@ -62,6 +64,7 @@ impl Default for LayerOptions {
             flamsteed: false,
             hip: false,
             brightness: 1.,
+            fade: None,
             marking: 0,
             landscape: true,
             milky_way: Default::default(),
@@ -151,11 +154,7 @@ impl LayerOptions {
                                     .checkbox(&mut value, decode(&record.japanese_hiragana_bytes))
                                     .changed()
                                 {
-                                    if value == self.show_all_constellations {
-                                        self.exceptions.remove(&record.abbreviation);
-                                    } else {
-                                        self.exceptions.insert(record.abbreviation.clone());
-                                    }
+                                    self.set_constellation(&record.abbreviation, value);
                                 }
                             }
                         });
@@ -174,12 +173,17 @@ impl LayerOptions {
             ] {
                 ui.checkbox(flag, name);
             }
-            ui.add(
-                egui::Slider::new(&mut self.brightness, 0.01..=100.)
-                    .logarithmic(true)
-                    .clamping(egui::SliderClamping::Edits)
-                    .text("明るさ係数（小さいほど明るい）"),
-            );
+            if ui
+                .add(
+                    egui::Slider::new(&mut self.brightness, 0.01..=100.)
+                        .logarithmic(true)
+                        .clamping(egui::SliderClamping::Edits)
+                        .text("明るさ係数（小さいほど明るい）"),
+                )
+                .changed()
+            {
+                self.fade = None;
+            }
             egui::ComboBox::from_label("マーカー")
                 .selected_text(["なし", "二重星", "系外惑星のある星"][self.marking as usize])
                 .show_ui(ui, |ui| {
