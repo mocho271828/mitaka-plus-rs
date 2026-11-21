@@ -1,5 +1,6 @@
 mod calendar;
 mod camera;
+mod celestial;
 use interprocess::local_socket::{Stream, prelude::*};
 use mlua::{Error, Lua, Value as LuaValue};
 use serde_json::{Value, json};
@@ -201,6 +202,9 @@ impl UserData for HostObject {
                 && let Some(v) = calendar::get(lua, obj, &key)?
             {
                 return Ok(v);
+            }
+            if let Some(f) = celestial::method(lua, obj, &key)? {
+                return Ok(LuaValue::Function(f));
             }
             if obj.name == "Camera"
                 && let Some(f) = camera::method(lua, obj, &key)?

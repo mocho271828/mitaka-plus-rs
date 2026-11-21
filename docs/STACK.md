@@ -46,9 +46,10 @@
 | 38 | viewer-controls | ui・ポインター選択、距離目盛と表示設定 | Lua・手動変更とセッションの整合 | 500 | implemented |
 | 39 | sky-deep-catalogs | ui・全天図のNGC・SDSSと地平姿勢 | 全銀河の密度積算と投影座標の対照 | 600 | implemented |
 | 40 | eclipse-layers | ui・食の境界、本影と半影の円錐 | 旧版の遮蔽物と接線位置の照合 | 550 | implemented |
-| 41 | display-script | adapter・恒星名、星座指定と惑星の表示倍率 | 実Luaとv9の相互運用、異常入力 | 550 | not-started |
-| 42 | surface-targets | ui・月と9天体の指定地点への飛行 | 体固定座標とv9着陸地点を旧版で照合 | 550 | not-started |
-| 43 | horizon-objects | ui・小天体・探査機の地表視差と注視 | 風景の透過度、選択、旧観測方向を比較 | 500 | not-started |
-| 44 | parity | contract・旧版機能と三OS配布の検証 | 機能別の対応実績、配布物と起動経路を検証 | 機能ごとに分割 | not-started |
+| 41 | display-script | adapter・恒星名、星座指定と惑星の表示倍率 | 実Luaとv9の相互運用、異常入力 | 550 | implemented |
+| 42 | object-groups | ui・小天体・衛星・探査機の同時表示と軌道 | 分類・日時・表示状態とLuaの往復を照合 | 700 | not-started |
+| 43 | surface-targets | ui・月と9天体の指定地点への飛行 | 体固定座標とv9着陸地点を旧版で照合 | 550 | not-started |
+| 44 | horizon-objects | ui・小天体・探査機の地表視差と注視 | 風景の透過度、選択、旧観測方向を比較 | 500 | not-started |
+| 45 | parity | contract・旧版機能と三OS配布の検証 | 機能別の対応実績、配布物と起動経路を検証 | 機能ごとに分割 | not-started |
 
 差分が複数のレビュー理由を持つ場合はその単位を分割する。親が変わる場合は先に表を修正し、レビュー指摘は責務を持つ親で直す。CI結果・実機結果・未実装項目を区別する。下位PRから順にレビューし、全機能の実装と検証が揃った時点でマージ作業へ引き継ぐ。

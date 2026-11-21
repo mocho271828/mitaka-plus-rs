@@ -71,6 +71,9 @@ impl LayerOptions {
         if !brightness.is_finite() || brightness <= 0. {
             return Err("恒星の明るさ係数は正の有限 float が必要です".into());
         }
+        if kind == 60 {
+            self.fade = None;
+        }
         self.brightness = brightness;
         Ok(true)
     }
@@ -128,7 +131,7 @@ impl LayerOptions {
         let mut selected = BTreeSet::new();
         for hip in v["selected_star_name_hips"].as_array().unwrap() {
             let hip = hip.as_f64().unwrap() as i32;
-            if !data.layers.names.contains_key(&hip) {
+            if !data.layers.known_star_names.contains(&hip) {
                 return Err(io::Error::other(
                     "保存した固有名を現在のカタログで照合できません",
                 ));

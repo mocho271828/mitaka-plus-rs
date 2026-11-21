@@ -284,6 +284,9 @@ impl Session {
                 return Err(err(prop));
             }
         }
+        if number(&v["radius_display"], "space_planet")? as f32 / 20. == 0. {
+            return Err(err("space_planet"));
+        }
         integer(&v["stars"], "marking", 0, 2)?;
         integer(&v["atmosphere"], "mode", 0, 2)?;
         range(&v["atmosphere"], "intensity", 0., f32::MAX.into())?;

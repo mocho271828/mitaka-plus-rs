@@ -10,6 +10,7 @@ mod layers;
 mod media_preview;
 mod objects;
 mod planet_layers;
+mod planet_scale;
 mod playback;
 mod projection;
 mod projector;
@@ -738,6 +739,13 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         self.camera_frame(ctx);
         self.clock_frame(ctx);
+        if self
+            .options
+            .layers
+            .sample_brightness(std::time::Instant::now())
+        {
+            ctx.request_repaint_after(std::time::Duration::from_millis(16));
+        }
         self.scripts_frame(ctx);
         self.media.frame(ctx);
         if self.view == View::Solar {
