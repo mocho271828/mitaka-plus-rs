@@ -1,5 +1,7 @@
 //! Earth/Mars topography, from Mitaka 1.3.1 mtk_topography.cpp and Mitaka_plus f9fe624.
 //! Copyright (c) 2007-2014 Tsunehiko Kato. See licenses/Mitaka.txt.
+mod geometry;
+pub use geometry::{Amplification, Bounds, GridWindow, Mesh, Vertex, unit_direction};
 use std::{
     fs::{File, Metadata, OpenOptions},
     io::{self, Read, Seek, SeekFrom},
@@ -188,58 +190,82 @@ impl Terrain {
         self.radius
     }
 
-    /// 最高解像度の格子を使う双線形標高。画面のLODを使う着地交点とは異なる。
-    pub fn elevation_m(&mut self, longitude_deg: f64, latitude_deg: f64) -> io::Result<f64> {
-        if !longitude_deg.is_finite() || !(-90.0..=90.0).contains(&latitude_deg) {
-            return Err(invalid("invalid terrain location"));
-        }
+    pub fn verify_unchanged(&mut self) -> io::Result<()> {
         if Revision::from(self.file.metadata()?)? != self.revision {
             self.cached = None;
             return Err(invalid("terrain source changed"));
         }
-        let (patch, lon) = self
+        Ok(())
+    }
+    pub fn patch_count(&self) -> usize {
+        self.patches.len()
+    }
+    pub fn bounds(&self, patch: usize) -> io::Result<Bounds> {
+        let p = self
             .patches
-            .iter()
-            .find_map(|p| {
-                let lon = if (p.west..=p.east).contains(&longitude_deg) {
-                    longitude_deg
-                } else {
-                    p.west
-                        + (longitude_deg.rem_euclid(360.0) - p.west.rem_euclid(360.0))
-                            .rem_euclid(360.0)
-                };
-                ((p.south..=p.north).contains(&latitude_deg) && lon <= p.east).then_some((p, lon))
-            })
-            .ok_or_else(|| invalid("location outside terrain patches"))?;
-        let index = patch.grids.end - 1;
-        let grid = &self.grids[index];
-        let x = ((lon - patch.west) / (patch.east - patch.west)) * grid.columns as f64;
-        let y = ((patch.north - latitude_deg) / (patch.north - patch.south)) * grid.rows as f64;
-        if self.cached.as_ref().map(|entry| entry.0) != Some(index) {
+            .get(patch)
+            .ok_or_else(|| invalid("unknown terrain patch"))?;
+        Ok(Bounds {
+            west: p.west,
+            east: p.east,
+            north: p.north,
+            south: p.south,
+            levels: p.grids.len(),
+        })
+    }
+    /// A retained open file and at most one raw signed grid, including its one-cell halo.
+    pub fn grid(&mut self, patch: usize, level: usize) -> io::Result<GridWindow<'_>> {
+        self.verify_unchanged()?;
+        let bounds = self.bounds(patch)?;
+        let index = self.patches[patch]
+            .grids
+            .clone()
+            .nth(level)
+            .ok_or_else(|| invalid("unknown terrain level"))?;
+        let g = &self.grids[index];
+        let (offset, len, columns, rows) = (g.offset, g.len(), g.columns, g.rows);
+        if self.cached.as_ref().map(|v| v.0) != Some(index) {
             self.cached = None;
-            self.file.seek(SeekFrom::Start(grid.offset))?;
-            let mut bytes = vec![0u8; grid.len()];
+            let mut bytes = vec![0u8; len];
+            self.file.seek(SeekFrom::Start(offset))?;
             self.file.read_exact(&mut bytes)?;
-            if Revision::from(self.file.metadata()?)? != self.revision {
-                return Err(invalid("terrain changed while reading grid"));
-            }
+            self.verify_unchanged()?;
             self.cached = Some((index, bytes));
         }
-        let bytes = &self
-            .cached
-            .as_ref()
-            .expect("grid installed after successful read")
-            .1;
-        let column = (x as usize).min(grid.columns - 1);
-        let row = (y as usize).min(grid.rows - 1);
-        let sample = |dx: usize, dy: usize| {
-            let i = 2 * ((row + 1 + dy) * (grid.columns + 3) + column + 1 + dx);
-            f64::from(i16::from_le_bytes([bytes[i], bytes[i + 1]]))
-        };
-        let dx = x - column as f64;
-        let dy = y - row as f64;
-        let top = (1.0 - dx) * sample(0, 0) + dx * sample(1, 0);
-        let bottom = (1.0 - dx) * sample(0, 1) + dx * sample(1, 1);
-        Ok(self.unit * ((1.0 - dy) * top + dy * bottom))
+        Ok(GridWindow {
+            patch,
+            level,
+            columns,
+            rows,
+            bounds,
+            radius_m: self.radius,
+            unit_m: self.unit,
+            bytes: &self.cached.as_ref().expect("loaded terrain tile").1,
+        })
+    }
+    pub fn locate(&self, longitude_deg: f64, latitude_deg: f64) -> io::Result<(usize, f64)> {
+        if !longitude_deg.is_finite() || !(-90. ..=90.).contains(&latitude_deg) {
+            return Err(invalid("invalid terrain location"));
+        }
+        for (i, p) in self.patches.iter().enumerate() {
+            if !(p.south..=p.north).contains(&latitude_deg) {
+                continue;
+            }
+            let lon = if (p.west..=p.east).contains(&longitude_deg) {
+                longitude_deg
+            } else {
+                p.west + (longitude_deg.rem_euclid(360.) - p.west.rem_euclid(360.)).rem_euclid(360.)
+            };
+            if lon <= p.east {
+                return Ok((i, lon));
+            }
+        }
+        Err(invalid("location outside terrain patches"))
+    }
+    /// Raw signed bilinear height, independent of the display amplification and LOD.
+    pub fn elevation_m(&mut self, longitude_deg: f64, latitude_deg: f64) -> io::Result<f64> {
+        let (patch, lon) = self.locate(longitude_deg, latitude_deg)?;
+        let level = self.bounds(patch)?.levels - 1;
+        self.grid(patch, level)?.elevation_m(lon, latitude_deg)
     }
 }

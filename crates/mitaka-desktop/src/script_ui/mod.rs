@@ -138,6 +138,7 @@ impl App {
                 "planetsVisible":self.solar.layers.visible,
                 "planetLabels":self.solar.layers.labels,
                 "planetAxes":self.solar.layers.axes,
+                "topoAmplification":self.terrain_amplification.stage(),
                 "earthClouds":self.solar.surfaces.clouds,
                 "earthCityLights":self.solar.surfaces.lights,
                 "shadows":self.solar.surfaces.eclipse,
@@ -178,6 +179,15 @@ impl App {
                     Some(18) => self.execute(crate::commands::Command::Export, ctx),
                     Some(42) => self.execute(crate::commands::Command::Fullscreen, ctx),
                     Some(43) => self.execute(crate::commands::Command::About, ctx),
+                    Some(86) => {
+                        let raw = msg["number"]
+                            .as_f64()
+                            .filter(|v| v.fract() == 0. && (1. ..=5.).contains(v))
+                            .ok_or("地形倍率は1から5の整数段階です")?;
+                        let mode = mitaka_core::terrain::Amplification::from_stage(raw as u64)
+                            .map_err(|e| e.to_string())?;
+                        self.set_terrain_mode(mode).map_err(|e| e.to_string())?;
+                    }
                     Some(71) => {
                         let v = msg["number"]
                             .as_f64()
