@@ -255,6 +255,7 @@ pub struct Solar {
     eclipse_source: Option<Result<eclipse::Source, String>>,
     eclipse_overlay: eclipse::Overlay,
     surface_flight: Option<SurfaceFlight>,
+    sky_background: crate::layers::background::solar::Background,
     pub(crate) horizon_overlay: Option<surface_flight::Overlay>,
     pub(crate) flight_site: Option<Site>,
     pub landed: Option<usize>,
@@ -278,6 +279,7 @@ impl Default for Solar {
             eclipse_overlay: Default::default(),
             surface_flight: None,
             horizon_overlay: None,
+            sky_background: Default::default(),
             flight_site: None,
             landed: None,
             sky_selection: None,
@@ -595,6 +597,14 @@ impl Solar {
         } else if self.follow {
             self.camera.target = dest;
         }
+        self.sky_background.paint(
+            &painter,
+            rect,
+            self.camera,
+            &data.layers.backgrounds,
+            layers.milky_way,
+            response.dragged() || self.flight.is_some() || self.surface_flight.is_some(),
+        )?;
         galaxies.paint(&painter, &response, self.camera, &layers.deep_sky, picking);
         let click = picking.pointer(&response);
         let sky = sky::Sky {
