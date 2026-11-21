@@ -247,6 +247,7 @@ mod tests {
             .insert(&sky.root, Kind::Spacecraft, craft.clone());
         let rect = egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(400., 300.));
         let chart = Chart {
+            flight: None,
             view: View::Horizon,
             camera: Camera {
                 longitude: 316.5876227188703,

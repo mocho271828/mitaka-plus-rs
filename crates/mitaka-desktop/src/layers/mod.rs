@@ -326,6 +326,7 @@ mod tests {
                 |ctx| {
                     let painter = ctx.layer_painter(egui::LayerId::background());
                     let chart = Chart {
+                        flight: None,
                         view,
                         camera: Camera::default(),
                         frame: &frame,

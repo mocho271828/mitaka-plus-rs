@@ -26,10 +26,12 @@ pub struct Chart<'a> {
     pub camera: Camera,
     pub frame: &'a ObservationFrame,
     pub rect: Rect,
+    pub flight: Option<crate::solar::surface_flight::Overlay>,
 }
 impl Chart<'_> {
     pub(crate) fn point(&self, coord: [f64; 2]) -> Pos2 {
-        let [x, y] = self.camera.position(self.view, coord);
+        let xy = self.camera.position(self.view, coord);
+        let [x, y] = self.flight.map_or(xy, |flight| flight.project(xy));
         Pos2::new(
             self.rect.left() + x as f32 * self.rect.width(),
             self.rect.top() + y as f32 * self.rect.height(),
@@ -58,13 +60,17 @@ impl Chart<'_> {
         let color = Color32::from_rgb(23, 31, 34);
         for i in 0..=192 {
             let fraction = i as f32 / 192.;
-            let longitude = ((f64::from(fraction) - 0.5) * 360. / self.camera.zoom).to_radians();
+            let sky_x = self.flight.map_or(f64::from(fraction), |f| {
+                f.cylinder_uv([f64::from(fraction), 0.5])[0]
+            });
+            let longitude = ((sky_x - 0.5) * 360. / self.camera.zoom).to_radians();
             let (sr, cr) = self.camera.roll.to_radians().sin_cos();
             let a = longitude.cos() * tilt.sin() + longitude.sin() * sr * tilt.cos();
             let b = tilt.cos() * cr;
             let altitude = if b >= 0. { (-a).atan2(b) } else { a.atan2(-b) }.to_degrees();
-            let y = self.rect.center().y
-                - (altitude * self.camera.zoom / 180.) as f32 * self.rect.height();
+            let row = 0.5 - altitude * self.camera.zoom / 180.;
+            let screen_y = self.flight.map_or(row, |f| f.project([sky_x, row])[1]);
+            let y = self.rect.top() + screen_y as f32 * self.rect.height();
             let x = self.rect.left() + fraction * self.rect.width();
             mesh.colored_vertex(
                 Pos2::new(x, y.clamp(self.rect.top(), self.rect.bottom())),

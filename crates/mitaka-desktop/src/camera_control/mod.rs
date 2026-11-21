@@ -80,7 +80,7 @@ pub(crate) struct State {
     pub controls: bool,
     entry: String,
     duration: f64,
-    mode_duration: f64,
+    pub(crate) mode_duration: f64,
     zoom_mode: u8,
     az: Option<Scalar>,
     alt: Option<Scalar>,
