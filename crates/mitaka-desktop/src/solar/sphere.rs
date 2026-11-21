@@ -290,7 +290,7 @@ fn rasterize(
         (0.3 * (1. - (length(eye) - 1.) / 1.7)).clamp(0., 1.)
     };
     let offset = if index == 0 || index == 4 { 0. } else { 0.5 };
-    let focal = f64::from(rect.height()) / (2. * 22.5_f64.to_radians().tan());
+    let focal = f64::from(rect.height()) / (2. * (key.camera.fov * 0.5).to_radians().tan());
     let cloud_scale = 1. + 10. / 6378.1;
     let cloud_eye = scale(eye, 1. / cloud_scale);
     for y in 0..h {

@@ -21,6 +21,7 @@ enum Scene {
     Galaxy,
     ObjectBrowser,
     SpacecraftPaths,
+    CameraLua,
 }
 impl Scene {
     fn name(self) -> &'static str {
@@ -35,6 +36,7 @@ impl Scene {
             Self::Galaxy => "galaxy",
             Self::ObjectBrowser => "object-browser",
             Self::SpacecraftPaths => "spacecraft-paths",
+            Self::CameraLua => "camera-lua",
         }
     }
 }
@@ -63,6 +65,7 @@ impl Smoke {
                     Scene::Galaxy,
                     Scene::ObjectBrowser,
                     Scene::SpacecraftPaths,
+                    Scene::CameraLua,
                 ],
                 index: 0,
                 entered: false,
@@ -131,6 +134,9 @@ impl Smoke {
                 app.surface = Some(ground);
                 app.view = View::Surface;
             }
+            Scene::CameraLua => {
+                app.start_camera_check(ctx)?;
+            }
             Scene::SpacecraftPaths => {
                 if !data
                     .root
@@ -182,6 +188,14 @@ impl Smoke {
                 app.projector.open = false;
             }
             return Ok(false);
+        }
+        if scene == Scene::CameraLua {
+            if !app.camera_check_complete()? {
+                return Ok(false);
+            }
+            if !self.waiting {
+                app.check_camera_session()?;
+            }
         }
         if scene == Scene::Galaxy {
             let Some(g) = &app.galaxies else {

@@ -13,6 +13,7 @@ pub struct Camera {
     pub longitude: f64,
     pub latitude: f64,
     pub zoom: f64,
+    pub roll: f64,
 }
 impl Default for Camera {
     fn default() -> Self {
@@ -20,6 +21,7 @@ impl Default for Camera {
             longitude: 180.0,
             latitude: 0.0,
             zoom: 1.0,
+            roll: 0.,
         }
     }
 }
@@ -40,6 +42,8 @@ impl Camera {
             let forward = cosine * cd * ct + sine * st;
             let right = cosine * sd;
             let up = sine * ct - cosine * cd * st;
+            let (sr, cr) = self.roll.to_radians().sin_cos();
+            let (right, up) = (right * cr - up * sr, up * cr + right * sr);
             (
                 right.atan2(forward).to_degrees(),
                 up.atan2(forward.hypot(right)).to_degrees(),
@@ -101,6 +105,7 @@ mod tests {
             longitude: 350.,
             latitude: 70.,
             zoom: 1.,
+            roll: 0.,
         };
         near(camera.position(View::Horizon, [350., 70.]), [0.5, 0.5]);
         near(

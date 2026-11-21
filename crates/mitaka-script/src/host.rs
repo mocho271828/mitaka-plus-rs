@@ -1,3 +1,4 @@
+mod camera;
 use interprocess::local_socket::{Stream, prelude::*};
 use mlua::{Error, Lua, Value as LuaValue};
 use serde_json::{Value, json};
@@ -195,6 +196,11 @@ impl HostObject {
 impl UserData for HostObject {
     fn add_methods<M: UserDataMethods<Self>>(m: &mut M) {
         m.add_meta_method(MetaMethod::Index, |lua, obj, key: String| {
+            if obj.name == "Camera"
+                && let Some(f) = camera::method(lua, obj, &key)?
+            {
+                return Ok(LuaValue::Function(f));
+            }
             for f in FIELDS.iter().filter(|f| f.object == obj.name) {
                 if f.name == key {
                     return obj.get_field(lua, f);

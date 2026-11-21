@@ -124,7 +124,7 @@ impl App {
 
     fn script_message(&mut self, msg: &Value, ctx: &egui::Context) -> Result<Value, String> {
         match msg["op"].as_str() {
-            Some("snapshot") => Ok(self.options.layers.snapshot(json!({
+            Some("snapshot") => Ok(self.camera_snapshot(self.options.layers.snapshot(json!({
                 "ok":true,
                 "jd":self.jd,
                 "lines":self.options.lines,
@@ -148,9 +148,10 @@ impl App {
                 "placeSetting":self.settings,
                 "scriptOutput":self.scripts.panel,
                 "dualScreen":self.projector.open,
-            }))),
+            })))),
             Some("apply") => {
                 match msg["kind"].as_u64() {
+                    Some(kind @ (3 | 4 | 12 | 89..=105)) => self.camera_action(kind, msg, ctx)?,
                     Some(kind @ (0 | 2 | 19 | 20 | 72..=78)) => self.time_action(kind, msg)?,
                     Some(kind @ (27..=30 | 69 | 70 | 79)) => {
                         let flag = msg["enabled"].as_bool().ok_or("真偽値が必要です")?;
@@ -421,6 +422,59 @@ impl App {
                 Ok((dir, file)) => self.scripts.launch(file, false, work, dir, ctx),
                 Err(e) => self.error = Some(e.to_string()),
             }
+        }
+    }
+}
+impl App {
+    pub(crate) fn start_camera_check(&mut self, ctx: &egui::Context) -> io::Result<()> {
+        let root = self
+            .data
+            .as_ref()
+            .ok_or_else(|| io::Error::other("天文データがありません"))?
+            .root
+            .clone();
+        self.objects = Default::default();
+        self.solar = Default::default();
+        self.view = crate::projection::View::Solar;
+        let dir = run::scratch()?;
+        let file = local_source(
+            dir.path(),
+            r#"
+Camera.target='Planet.Earth'
+assert(Camera.target=='Planet.Earth')
+Camera.duration=0
+Camera:setZoomTo(2*UNIT_AU)
+assert(math.abs(Camera.zoom / UNIT_AU-2)<1e-10)
+Camera:setZoomLogTo(3*UNIT_AU,0)
+assert(math.abs(Camera.zoom / UNIT_AU-3)<1e-10)
+Camera:setEuler(15,22,-7)
+local h,p,r=Camera:getEuler()
+assert(math.abs(h-15)<1e-8 and math.abs(p-22)<1e-8 and math.abs(r+7)<1e-8)
+local x,y,z,w=Camera:getOrient()
+Camera:setOrientTo(x,y,z,w,0,false)
+Camera:setAzimuthTo(-60,0); Camera:setAltitudeTo(36,0,false)
+assert(Camera.azimuth==-60 and Camera.altitude==36)
+Camera:setFovTo(45,0);assert(Camera.fov==45)
+Camera:lookTo('Star.Sirius',0)
+assert(not pcall(function() Camera:setOrient(0,0,0,0) end))
+assert(not pcall(function() Camera:setZoomLogTo(-1,1) end))
+print('camera-check-complete')
+"#,
+        )?;
+        self.scripts.launch(file, false, root, dir, ctx);
+        Ok(())
+    }
+    pub(crate) fn camera_check_complete(&self) -> io::Result<bool> {
+        if self.scripts.job.is_some() {
+            return Ok(false);
+        }
+        if self.scripts.log.contains("camera-check-complete") {
+            Ok(true)
+        } else {
+            Err(io::Error::other(format!(
+                "Lua camera test: {}",
+                self.scripts.log
+            )))
         }
     }
 }

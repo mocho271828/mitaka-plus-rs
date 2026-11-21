@@ -299,6 +299,36 @@ impl Browser {
     }
 }
 
+pub(crate) struct ScriptTarget {
+    catalog: Catalog,
+    row: usize,
+}
+impl ScriptTarget {
+    pub(crate) fn open(name: &str, sky: &SkyData, browser: &Browser) -> io::Result<Self> {
+        let (prefix, key) = name
+            .split_once('.')
+            .ok_or_else(|| error("対象IDが不正です"))?;
+        let kind = match prefix {
+            "Satellite" => Kind::Satellites,
+            "Spacecraft" => Kind::Spacecraft,
+            "Asteroids" | "Comet" | "TNO" => Kind::Small,
+            _ => return Err(error("対象カタログを利用できません")),
+        };
+        let catalog = Catalog::load(kind, &sky.root)?;
+        let preferred = browser
+            .active
+            .and_then(|i| browser.data.as_ref()?.satellite_source(i));
+        let row = catalog.script_row(prefix, key, preferred)?;
+        Ok(Self { catalog, row })
+    }
+    pub(crate) fn position(&self, sky: &SkyData, jd: f64) -> io::Result<[f64; 3]> {
+        match self.catalog.locate(self.row, sky, jd)? {
+            Position::Solar(p, _) => Ok(p),
+            _ => Err(error("日心座標がありません")),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
