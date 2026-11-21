@@ -7,6 +7,7 @@ mod galaxies;
 mod layers;
 mod media_preview;
 mod objects;
+mod planet_layers;
 mod playback;
 mod projection;
 mod projector;
@@ -351,6 +352,7 @@ impl App {
         }
         self.options.magnitude = self.options.magnitude.max(star.magnitude);
         self.selected = Some(hip);
+        self.solar.layers.select(self.view, None);
         if matches!(self.view, View::Solar | View::Surface | View::Galaxy) {
             self.view = View::Sky;
         }
@@ -463,6 +465,7 @@ impl App {
                 });
                 ui.separator();
                 self.clock_controls(ui);
+                self.solar.layers.panel(ui);
                 let lat_changed = ui
                     .add(egui::Slider::new(&mut self.latitude, -90. ..=90.).text("緯度 °"))
                     .changed();
@@ -496,6 +499,25 @@ impl App {
         egui::Window::new("選択天体の情報")
             .open(&mut self.info)
             .show(ctx, |ui| {
+                if let Some((body, data)) = self
+                    .solar
+                    .layers
+                    .selected(self.view)
+                    .zip(self.data.as_ref())
+                {
+                    if let Ok(bodies) = planet_layers::positions(&data.ephemeris, self.jd) {
+                        if let Some(b) = bodies.iter().find(|b| b.id == body) {
+                            ui.label(format!(
+                                "{}\n赤経 {:.5}°　赤緯 {:+.5}°\n地心距離 {:.8} AU",
+                                solar::NAMES[body],
+                                b.equatorial[0],
+                                b.equatorial[1],
+                                b.distance_au
+                            ));
+                            return;
+                        }
+                    }
+                }
                 if let Some((data, hip)) = self.data.as_ref().zip(self.selected) {
                     if let Some(&index) = data.by_hip.get(&hip) {
                         let star = &data.stars[index];
@@ -617,12 +639,16 @@ impl App {
         }
         let click = click.filter(|p| !show_landscape || !self.landscape_render.opaque_at(*p));
         let pick = chart.paint(&painter, data, &self.options, self.selected, click);
+        let body_pick = planet_layers::positions(&data.ephemeris, self.jd)
+            .ok()
+            .and_then(|bodies| self.solar.layers.paint(&chart, &painter, &bodies, click));
         self.object_on_sky(&chart, &painter);
         if show_landscape {
             self.landscape_render.paint(&painter, rect);
         }
         if click.is_some() {
-            self.selected = pick;
+            self.solar.layers.select(view, body_pick);
+            self.selected = if body_pick.is_some() { None } else { pick };
             ui.ctx().request_repaint();
         }
     }

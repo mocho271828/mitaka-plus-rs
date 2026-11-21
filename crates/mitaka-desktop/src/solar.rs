@@ -21,7 +21,7 @@ pub const NAMES: [&str; 11] = [
     "冥王星系",
     "月",
 ];
-const COLORS: [Color32; 11] = [
+pub(crate) const COLORS: [Color32; 11] = [
     Color32::GOLD,
     Color32::GRAY,
     Color32::LIGHT_YELLOW,
@@ -88,6 +88,17 @@ impl Scene {
         }
         let moon = lunar_position(jd)?;
         bodies[10] = plus(bodies[3], j2000_equatorial_to_ecliptic(moon)?);
+        // 月の軌道は現在の地球を基点とした地心軌道として表示する。
+        let lo = (jd - 13.67).max(mitaka_core::lunar::LUNAR_MINIMUM_JD);
+        let hi = (jd + 13.67).min(mitaka_core::lunar::LUNAR_MAXIMUM_JD);
+        let moon_path = (0..=90)
+            .map(|i| {
+                lunar_position(lo + (hi - lo) * f64::from(i) / 90.)
+                    .and_then(j2000_equatorial_to_ecliptic)
+                    .map(|p| plus(bodies[3], p))
+            })
+            .collect::<io::Result<Vec<_>>>()?;
+        orbits.push(moon_path);
         Ok(Self { jd, bodies, orbits })
     }
 }
@@ -185,6 +196,7 @@ pub struct Solar {
     scene: Option<Scene>,
     pub camera: SolarCamera,
     pub selected: usize,
+    pub layers: crate::planet_layers::PlanetLayers,
     pub orbits: bool,
     follow: bool,
     flight: Option<Flight>,
@@ -199,6 +211,7 @@ impl Default for Solar {
             scene: None,
             camera: Default::default(),
             selected: 0,
+            layers: Default::default(),
             orbits: true,
             follow: false,
             flight: None,
@@ -341,6 +354,7 @@ impl Solar {
                         self.stop();
                     }
                 });
+                self.layers.panel(ui);
                 ui.checkbox(&mut self.orbits, "惑星の軌跡");
                 ui.checkbox(&mut self.surfaces.clouds, "地球の雲");
                 ui.checkbox(&mut self.surfaces.lights, "都市光");
@@ -434,11 +448,37 @@ impl Solar {
         }
         if self.orbits {
             let stroke = Stroke::new(0.7_f32, Color32::from_rgb(59, 77, 100));
-            for path in &scene.orbits {
+            for (i, path) in scene.orbits.iter().enumerate() {
                 for segment in path.windows(2) {
                     if let (Some((a, _)), Some((b, _))) = (
-                        self.camera.project(segment[0], rect),
-                        self.camera.project(segment[1], rect),
+                        self.camera.project(
+                            if i == 9 {
+                                plus(
+                                    scene.bodies[3],
+                                    scale(
+                                        minus(segment[0], scene.bodies[3]),
+                                        self.layers.moon_orbit_scale(),
+                                    ),
+                                )
+                            } else {
+                                segment[0]
+                            },
+                            rect,
+                        ),
+                        self.camera.project(
+                            if i == 9 {
+                                plus(
+                                    scene.bodies[3],
+                                    scale(
+                                        minus(segment[1], scene.bodies[3]),
+                                        self.layers.moon_orbit_scale(),
+                                    ),
+                                )
+                            } else {
+                                segment[1]
+                            },
+                            rect,
+                        ),
                     ) {
                         if let Some([a, b]) = clip_line(rect.expand(1.), a, b) {
                             painter.line_segment([a, b], stroke);
@@ -452,8 +492,16 @@ impl Solar {
             .iter()
             .enumerate()
             .filter_map(|(i, p)| {
+                let p = if i == 10 {
+                    plus(
+                        scene.bodies[3],
+                        scale(minus(*p, scene.bodies[3]), self.layers.moon_orbit_scale()),
+                    )
+                } else {
+                    *p
+                };
                 self.camera
-                    .project(*p, rect)
+                    .project(p, rect)
                     .map(|(pos, depth)| (i, pos, depth))
             })
             .collect();
@@ -468,16 +516,16 @@ impl Solar {
             let radius = (RADII_KM[i] / KM_PER_AU * f64::from(rect.height())
                 / (2. * (22.5_f64).to_radians().tan() * depth)) as f32;
             let physical = radius;
-            let radius = radius.clamp(
-                if i == 0 { 5. } else { 2.6 },
-                rect.width().max(rect.height()) * 2.,
-            );
+            let factor = self.layers.scales[usize::from(i == 0)];
+            let radius = (radius.max(if i == 0 { 5. } else { 2.6 }) * factor)
+                .clamp(1., rect.width().max(rect.height()) * 2.);
             if !rect.expand(radius).contains(pos) {
                 continue;
             }
             let tile =
                 Rect::from_center_size(pos, egui::Vec2::splat(physical * 2.6 + 4.)).intersect(rect);
-            let textured = physical >= 2.
+            let textured = self.layers.visible
+                && physical >= 2.
                 && tile.is_positive()
                 && self.surfaces.draw(
                     &painter,
@@ -490,19 +538,41 @@ impl Solar {
                         tile,
                     },
                 )?;
-            if !textured {
+            if self.layers.visible && !textured {
                 painter.circle_filled(pos, radius, COLORS[i]);
             }
             if i == self.selected {
                 painter.circle_stroke(pos, radius + 3., Stroke::new(1.0_f32, Color32::WHITE));
             }
-            painter.text(
-                pos + egui::vec2(radius + 5., 0.),
-                egui::Align2::LEFT_CENTER,
-                NAMES[i],
-                egui::FontId::proportional(12.),
-                COLORS[i],
-            );
+            if self.layers.axes && i != 0 {
+                let axes = if i == 10 {
+                    mitaka_core::lunar::lunar_orientation(jd)?
+                } else {
+                    mitaka_core::rotation::planet_orientation(i - 1, jd)?
+                };
+                let arm = scale(axes[2], RADII_KM[i] * 3. / KM_PER_AU);
+                let center = scene.bodies[i];
+                if let (Some((a, _)), Some((b, _))) = (
+                    self.camera.project(minus(center, arm), rect),
+                    self.camera.project(plus(center, arm), rect),
+                ) {
+                    if let Some(line) = clip_line(rect, a, b) {
+                        painter.line_segment(line, Stroke::new(1_f32, Color32::LIGHT_GREEN));
+                    }
+                }
+            }
+            if self.layers.labels {
+                painter.text(
+                    pos + egui::vec2(radius + 5., 0.),
+                    egui::Align2::LEFT_CENTER,
+                    NAMES[i],
+                    egui::FontId::proportional(12.),
+                    COLORS[i],
+                );
+            }
+            if !self.layers.visible && !self.layers.labels {
+                continue;
+            }
             if let Some(click) = click {
                 let dist = pos.distance(click);
                 if dist <= radius.max(8.) && dist < nearest {
