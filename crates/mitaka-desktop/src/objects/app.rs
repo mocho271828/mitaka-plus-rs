@@ -30,6 +30,22 @@ impl App {
         match target {
             Position::Sky(coords, hip) => {
                 self.selected = hip;
+                match self.objects.kind {
+                    super::Kind::Ngc => {
+                        self.options.layers.deep_sky.ngc = true;
+                        if let Some(m) = self
+                            .objects
+                            .data
+                            .as_ref()
+                            .and_then(|c| c.nebula_magnitude(self.objects.active?))
+                        {
+                            self.options.magnitude = self.options.magnitude.max(m);
+                        }
+                    }
+                    super::Kind::Galaxies => self.options.layers.deep_sky.galaxies = true,
+                    super::Kind::Quasars => self.options.layers.deep_sky.quasars = true,
+                    _ => {}
+                }
                 if let Some(s) = hip
                     .and_then(|h| data.by_hip.get(&h))
                     .and_then(|&i| data.stars.get(i))

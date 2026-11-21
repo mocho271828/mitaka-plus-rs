@@ -29,12 +29,7 @@ impl Chart<'_> {
             emit(a, b);
         }
     }
-    pub(crate) fn paint_layers(
-        &self,
-        painter: &egui::Painter,
-        data: &SkyData,
-        opts: &LayerOptions,
-    ) {
+    pub(crate) fn paint_grids(&self, painter: &egui::Painter, opts: &LayerOptions) {
         for (sys, on, rgb) in [
             (System::Equatorial, opts.equatorial, [70, 91, 127]),
             (System::Ecliptic, opts.ecliptic, [150, 116, 61]),
@@ -71,6 +66,13 @@ impl Chart<'_> {
                 }
             }
         }
+    }
+    pub(crate) fn paint_constellation_layers(
+        &self,
+        painter: &egui::Painter,
+        data: &SkyData,
+        opts: &LayerOptions,
+    ) {
         if opts.boundaries {
             for r in &data.constellations {
                 if !opts.shows(&r.abbreviation) || r.boundary.len() < 2 {

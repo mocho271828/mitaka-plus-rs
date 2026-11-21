@@ -45,6 +45,7 @@ fn normalize(s: &str) -> String {
 enum Key {
     Hip(i32),
     Sky([f64; 2]),
+    Nebula(mitaka_core::extended_catalog::NgcRecord),
     Small(usize, usize),
     Satellite(usize, usize),
     Craft(usize),
@@ -110,7 +111,7 @@ impl Catalog {
                     rows.push(Entry::new(
                         format!("{prefix} {}", n.number),
                         format!("{file} · 記録 {}", i + 1),
-                        Key::Sky([n.ra_deg.into(), n.dec_deg.into()]),
+                        Key::Nebula(n),
                     ));
                 }
                 Store::Static
@@ -239,19 +240,50 @@ impl Catalog {
             self.rows[i].label.clone()
         }
     }
+    pub(super) fn nebula_magnitude(&self, i: usize) -> Option<f32> {
+        match self.rows.get(i)?.target {
+            Key::Nebula(r) => Some(r.magnitude),
+            _ => None,
+        }
+    }
     pub(super) fn info(&self, i: usize, jd: f64) -> String {
         if let Store::Sdss(file, rows) = &self.store {
             let r = &rows[i];
             format!(
-                "{file} · 記録 {} · 赤経 {:.5}°　赤緯 {:+.5}°　距離 {:.5} pc",
+                "{file} · 記録 {} · 赤経 {:.5}°　赤緯 {:+.5}°　距離 {:.5} pc　{} {:.5}",
                 i + 1,
                 r.ra_deg,
                 r.dec_deg,
-                r.distance_pc
+                r.distance_pc,
+                if *file == "SDSS_GAL.dat" {
+                    "eClass"
+                } else {
+                    "z"
+                },
+                r.classification_value
             )
         } else {
             let r = &self.rows[i];
             let detail = match (&self.store, &r.target) {
+                (_, Key::Nebula(n)) => {
+                    let mag = if n.magnitude == 0. {
+                        String::from("等級未記載")
+                    } else {
+                        format!(
+                            "{} 等級 {:.2}",
+                            if n.photographic_magnitude {
+                                "写真"
+                            } else {
+                                "V"
+                            },
+                            n.magnitude
+                        )
+                    };
+                    format!(
+                        "赤経 {:.5}°　赤緯 {:+.5}°　{mag}　視直径 {:.2}′",
+                        n.ra_deg, n.dec_deg, n.size_arcmin
+                    )
+                }
                 (Store::Craft(c), Key::Craft(i)) => c.sampling(*i, jd).unwrap_or_default(),
                 (Store::Small(d), Key::Small(s, i)) => {
                     let body = &d.sources[*s].records[*i];
@@ -399,6 +431,7 @@ impl Catalog {
                     .ok_or_else(|| error("HIP カタログに対応する恒星がありません"))?;
                 Position::equatorial([s.ra_deg.into(), s.dec_deg.into()], Some(*hip))
             }
+            (_, Key::Nebula(n)) => Position::equatorial([n.ra_deg.into(), n.dec_deg.into()], None),
             (_, Key::Sky(pos)) => Position::equatorial(*pos, None),
             (Store::Small(set), Key::Small(s, r)) => {
                 Position::solar(set.sources[*s].records[*r].position(jd)?, 0.10)
