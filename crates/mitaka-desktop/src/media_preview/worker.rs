@@ -149,27 +149,39 @@ mod tests {
         }
         for (path, length) in cases {
             let mut w = Worker::launch(Path::new(&exe), File::open(&path).unwrap(), &path).unwrap();
-            let wait = |w: &mut Worker, done: &dyn Fn(&Value) -> bool| {
-                let start = std::time::Instant::now();
-                loop {
-                    assert!(w.refresh().unwrap());
-                    if done(&w.state) {
-                        break;
+            let wait =
+                |w: &mut Worker, stage: &str, timeout: Duration, done: &dyn Fn(&Value) -> bool| {
+                    let start = std::time::Instant::now();
+                    loop {
+                        assert!(w.refresh().unwrap());
+                        if done(&w.state) {
+                            eprintln!("{stage} completed in {:?}", start.elapsed());
+                            break;
+                        }
+                        assert!(
+                            start.elapsed() < timeout,
+                            "{stage} timed out: {:?}",
+                            w.state
+                        );
+                        std::thread::sleep(Duration::from_millis(100));
                     }
-                    assert!(start.elapsed() < Duration::from_secs(15), "{:?}", w.state);
-                    std::thread::sleep(Duration::from_millis(100));
-                }
-            };
-            wait(&mut w, &|s| s["ready"].as_u64().is_some_and(|n| n > 0));
+                };
+            // 子プロセスはOSのWebView初期化に先立って接続先を通知する。
+            wait(&mut w, "open player", Duration::from_secs(90), &|s| {
+                s["ready"].as_u64().is_some_and(|n| n > 0)
+            });
             assert_eq!(w.state["frameLength"], length);
+            let command_timeout = Duration::from_secs(15);
             w.request(json!({"op":"play"})).unwrap();
-            wait(&mut w, &|s| {
+            wait(&mut w, "play", command_timeout, &|s| {
                 s["playing"] == true && s["seconds"].as_f64().unwrap() > 0.2
             });
             w.request(json!({"op":"pause"})).unwrap();
-            wait(&mut w, &|s| s["playing"] == false);
+            wait(&mut w, "pause", command_timeout, &|s| s["playing"] == false);
             w.request(json!({"op":"frame","frame":length/2})).unwrap();
-            wait(&mut w, &|s| s["frame"] == length / 2);
+            wait(&mut w, "seek frame", command_timeout, &|s| {
+                s["frame"] == length / 2
+            });
             assert!((w.state["seconds"].as_f64().unwrap() - 3.).abs() < 1e-4);
         }
     }

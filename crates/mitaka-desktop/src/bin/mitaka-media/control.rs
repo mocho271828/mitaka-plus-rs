@@ -56,9 +56,16 @@ impl Control {
             }
             c.queue.push_back(command);
         }
-        Ok(
-            json!({"ok":true,"seconds":c.seconds,"duration":c.duration,"playing":c.playing,"ready":c.ready,"frame":range.map(|(rate,total)|(c.seconds*rate+1e-7).floor().clamp(0.,f64::from(total))as u32),"frameLength":range.map(|(_,len)|len)}),
-        )
+        Ok(json!({
+            "ok": true,
+            "reported": c.reported,
+            "seconds": c.seconds,
+            "duration": c.duration,
+            "playing": c.playing,
+            "ready": c.ready,
+            "frame": range.map(|(rate, total)| (c.seconds * rate + 1e-7).floor().clamp(0., f64::from(total)) as u32),
+            "frameLength": range.map(|(_, len)| len),
+        }))
     }
     pub fn sync(&self, text: &str) -> Result<String, &'static str> {
         let mut fields = text.split_ascii_whitespace();
