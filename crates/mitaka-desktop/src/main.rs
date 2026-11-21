@@ -3,7 +3,9 @@ mod catalog;
 mod chart;
 mod commands;
 mod fonts;
+mod galaxies;
 mod projection;
+mod smoke;
 mod solar;
 mod surface;
 
@@ -87,6 +89,7 @@ struct App {
     data: Option<SkyData>,
     solar: solar::Solar,
     surface: Option<surface::Surface>,
+    galaxies: Option<galaxies::Browser>,
     capture: Option<PathBuf>,
     canvas_rect: egui::Rect,
     menus: Menus,
@@ -105,14 +108,14 @@ struct App {
     search_message: String,
     error: Option<String>,
     utc: String,
-    smoke_frames: Option<u8>,
+    smoke: Option<smoke::Smoke>,
 }
 impl App {
     fn new(
         cc: &eframe::CreationContext<'_>,
         initial: Option<SkyData>,
         error: Option<String>,
-        smoke: bool,
+        smoke: Option<smoke::Smoke>,
     ) -> Result<Self, AppError> {
         fonts::install(&cc.egui_ctx);
         let menus = Menus::new(cc)?;
@@ -124,6 +127,7 @@ impl App {
             data: initial,
             solar: Default::default(),
             surface: None,
+            galaxies: None,
             capture: None,
             canvas_rect: egui::Rect::ZERO,
             menus,
@@ -142,7 +146,7 @@ impl App {
             search_message: String::new(),
             error,
             utc: utc.format("%Y-%m-%d %H:%M:%S").to_string(),
-            smoke_frames: smoke.then_some(0),
+            smoke,
         })
     }
     fn camera(&mut self) -> &mut Camera {
@@ -174,7 +178,8 @@ impl App {
                     self.set_date(jd);
                     self.solar = Default::default();
                     self.surface = None;
-                    if self.view == View::Surface {
+                    self.galaxies = None;
+                    if matches!(self.view, View::Surface | View::Galaxy) {
                         self.view = View::Sky;
                     }
                     self.selected = None;
@@ -192,6 +197,12 @@ impl App {
             Command::Horizon => self.view = View::Horizon,
             Command::Settings => self.settings = true,
             Command::Search => self.search = true,
+            Command::Galaxy => {
+                self.view = View::Galaxy;
+                if let Some(g) = &mut self.galaxies {
+                    g.controls = true;
+                }
+            }
             Command::Solar => self.view = View::Solar,
             Command::SolarControls => {
                 self.view = View::Solar;
@@ -230,6 +241,7 @@ impl App {
             Command::Info if self.view == View::Solar => self.solar.show_controls = true,
             Command::Info => self.info = true,
             Command::Reset if self.view == View::Solar => self.solar = Default::default(),
+            Command::Reset if self.view == View::Galaxy => self.galaxies = None,
             Command::Reset if self.view == View::Surface => self.view = View::Solar,
             Command::Reset => *self.camera() = Camera::default(),
         }
@@ -268,7 +280,7 @@ impl App {
         }
         self.options.magnitude = self.options.magnitude.max(star.magnitude);
         self.selected = Some(hip);
-        if matches!(self.view, View::Solar | View::Surface) {
+        if matches!(self.view, View::Solar | View::Surface | View::Galaxy) {
             self.view = View::Sky;
         }
         let view = self.view;
@@ -307,6 +319,11 @@ impl App {
     }
     fn panels(&mut self, ctx: &egui::Context) {
         self.solar.panel(ctx);
+        if let Some(g) = &mut self.galaxies {
+            if self.view == View::Galaxy {
+                g.panel(ctx);
+            }
+        }
         let mut search = self.search;
         egui::Window::new("恒星を検索")
             .open(&mut search)
@@ -412,6 +429,18 @@ impl App {
             return;
         }
         self.canvas_rect = ui.available_rect_before_wrap();
+        if self.view == View::Galaxy {
+            let Some(data) = self.data.as_ref() else {
+                return;
+            };
+            let g = self.galaxies.get_or_insert_with(|| {
+                let mut g = galaxies::Browser::new(data.root.clone(), ui.ctx());
+                g.controls = true;
+                g
+            });
+            g.draw(ui);
+            return;
+        }
         if self.view == View::Solar {
             let data = self.data.as_ref().unwrap();
             if let Err(e) = self.solar.draw(ui, &data.ephemeris, self.jd) {
@@ -498,18 +527,9 @@ impl eframe::App for App {
         if self.capture.is_none() {
             self.panels(ctx);
         }
-        if let Some(frame) = self.smoke_frames.as_mut() {
-            *frame += 1;
-            if *frame == 1 {
-                self.view = View::Horizon;
-            }
-            if *frame == 2 {
-                self.view = View::Solar;
-            }
-            if *frame >= 4 {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            } else {
-                ctx.request_repaint();
+        if let Some(mut smoke) = self.smoke.take() {
+            if !smoke.frame(self, ctx) {
+                self.smoke = Some(smoke);
             }
         }
     }
@@ -564,12 +584,23 @@ fn run() -> Result<(), AppError> {
             .with_min_inner_size([400., 300.]),
         ..Default::default()
     };
+    let (smoke, rx) = if args.smoke {
+        let (s, r) = smoke::Smoke::new();
+        (Some(s), Some(r))
+    } else {
+        (None, None)
+    };
     eframe::run_native(
         "Mitaka Plus",
         options,
-        Box::new(move |cc| Ok(Box::new(App::new(cc, data, error, args.smoke)?))),
+        Box::new(move |cc| Ok(Box::new(App::new(cc, data, error, smoke)?))),
     )
-    .map_err(|e| e.to_string().into())
+    .map_err(|e| e.to_string())?;
+    if let Some(rx) = rx {
+        rx.try_recv()
+            .map_err(|_| "描画検証中にウィンドウが閉じられました")??;
+    }
+    Ok(())
 }
 fn main() {
     if let Err(error) = run() {

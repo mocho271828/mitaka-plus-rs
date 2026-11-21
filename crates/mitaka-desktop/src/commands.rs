@@ -8,6 +8,7 @@ pub enum Command {
     Solar,
     SolarControls,
     Surface,
+    Galaxy,
     Export,
     Search,
     Settings,
@@ -23,6 +24,7 @@ const DISPLAY: &[(Command, &str)] = &[
     (Command::Sky, "全天図"),
     (Command::Horizon, "地平図"),
     (Command::Solar, "太陽系 3D"),
+    (Command::Galaxy, "銀河カタログ…"),
     (Command::Search, "恒星を検索…"),
     (Command::Info, "選択天体の情報…"),
 ];

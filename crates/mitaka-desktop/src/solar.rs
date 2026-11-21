@@ -166,6 +166,12 @@ impl Default for Solar {
     }
 }
 impl Solar {
+    pub fn prepare(&mut self, system: &Cf96Ephemeris, jd: f64) -> io::Result<()> {
+        if self.scene.as_ref().is_none_or(|s| s.jd != jd) {
+            self.scene = Some(Scene::load(system, jd)?);
+        }
+        Ok(())
+    }
     pub fn start_flight(&mut self) {
         self.follow = false;
         self.flight = Some(Flight {
@@ -208,9 +214,7 @@ impl Solar {
         self.show_controls = open;
     }
     pub fn draw(&mut self, ui: &mut egui::Ui, system: &Cf96Ephemeris, jd: f64) -> io::Result<()> {
-        if self.scene.as_ref().is_none_or(|s| s.jd != jd) {
-            self.scene = Some(Scene::load(system, jd)?);
-        }
+        self.prepare(system, jd)?;
         let (response, painter) =
             ui.allocate_painter(ui.available_size(), egui::Sense::click_and_drag());
         let rect = response.rect;
