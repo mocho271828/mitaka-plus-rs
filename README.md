@@ -18,3 +18,9 @@ cargo run --locked -p mitaka-desktop -- --data-root "/absolute/path/to/resources
 ```
 
 引数を省略した場合は「ファイル」メニューでデータを選びます。「表示」で全天図・地平図を切り替え、ドラッグで移動、スクロールで拡大、クリックで恒星を選択できます。「観測・表示設定」で日時と観測地点を変更します。読み込み結果だけを確かめるには `--inspect --data-root DIRECTORY` を使います。
+
+## 配布物とオフラインビルド
+
+手動の Distribution ワークフローは macOS Universal ZIP、Windows x64 ZIP、Ubuntu 24.04 amd64 の deb、依存ソース付きアーカイブを作成します。Macで作る場合は Rust の aarch64-apple-darwin と x86_64-apple-darwin 両ターゲットを導入して `bash tools/package.sh` を実行します。Mac版はアドホック署名です。
+
+`bash tools/offline-source.sh` は現在のコミットと Cargo.lock に記載された各依存のソースを dist にまとめます。SDK・Cコンパイラ・固定版Rustがある環境でアーカイブを展開し、`cargo build --workspace --frozen` を実行します。天文データは別途選択します。
