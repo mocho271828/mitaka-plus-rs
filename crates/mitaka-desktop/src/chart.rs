@@ -21,6 +21,39 @@ impl Default for Options {
         }
     }
 }
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum ChartTarget {
+    Star(i32),
+    Body(usize),
+}
+
+pub(crate) struct ChartPick<'a> {
+    pointer: Pos2,
+    opaque: &'a dyn Fn(Pos2) -> bool,
+    pub target: Option<ChartTarget>,
+    pub distance_sq: f32,
+}
+impl<'a> ChartPick<'a> {
+    pub fn new(pointer: Pos2, opaque: &'a dyn Fn(Pos2) -> bool) -> Self {
+        Self {
+            pointer,
+            opaque,
+            target: None,
+            distance_sq: f32::INFINITY,
+        }
+    }
+    pub fn consider(&mut self, target: ChartTarget, point: Pos2, radius: f32) {
+        let d = point.distance_sq(self.pointer);
+        // sky_model.cpp の pick_object は同じ距離の恒星と惑星だけで惑星を優先する。
+        let body_tie = d == self.distance_sq
+            && matches!(target, ChartTarget::Body(_))
+            && matches!(self.target, Some(ChartTarget::Star(_)));
+        if d <= radius * radius && (d < self.distance_sq || body_tie) && !(self.opaque)(point) {
+            self.target = Some(target);
+            self.distance_sq = d;
+        }
+    }
+}
 pub struct Chart<'a> {
     pub view: View,
     pub camera: Camera,
@@ -37,15 +70,15 @@ impl Chart<'_> {
             self.rect.top() + y as f32 * self.rect.height(),
         )
     }
-    pub fn observed(&self, ra: f32, dec: f32) -> Option<[f64; 2]> {
+    pub fn observed(&self, ra: f64, dec: f64) -> Option<[f64; 2]> {
         if self.view == View::Sky {
-            Some([ra.into(), dec.into()])
+            Some([ra, dec])
         } else {
-            self.frame.to_horizontal(ra.into(), dec.into()).ok()
+            self.frame.to_horizontal(ra, dec).ok()
         }
     }
     fn star_position(&self, star: &Star) -> Option<(Pos2, f32)> {
-        let coords = self.observed(star.ra_deg, star.dec_deg)?;
+        let coords = self.observed(star.ra_deg.into(), star.dec_deg.into())?;
         let opacity = if self.view == View::Horizon && coords[1] < 0. {
             0.3
         } else {
@@ -113,8 +146,8 @@ impl Chart<'_> {
         data: &SkyData,
         options: &Options,
         selected: Option<i32>,
-        click: Option<Pos2>,
-    ) -> Option<i32> {
+        mut pick: Option<&mut ChartPick<'_>>,
+    ) {
         if self.view == View::Horizon {
             self.draw_horizon(painter);
         }
@@ -156,7 +189,8 @@ impl Chart<'_> {
                     }
                 }
                 if options.labels {
-                    if let Some(coords) = self.observed(constellation.ra_deg, constellation.dec_deg)
+                    if let Some(coords) =
+                        self.observed(constellation.ra_deg.into(), constellation.dec_deg.into())
                     {
                         let p = self.point(coords);
                         if self.rect.contains(p) {
@@ -172,11 +206,9 @@ impl Chart<'_> {
                 }
             }
         }
-        let mut pick = None;
-        let mut min_sq = 8f32.powi(2);
         let mut selected_point = None;
         if !options.layers.stars {
-            return None;
+            return;
         }
         for star in &data.stars {
             if star.magnitude > options.magnitude {
@@ -227,12 +259,8 @@ impl Chart<'_> {
             if selected == Some(star.hip) {
                 selected_point = Some(p);
             }
-            if let Some(click) = click {
-                let delta = p.distance_sq(click);
-                if delta <= min_sq {
-                    pick = Some(star.hip);
-                    min_sq = delta;
-                }
+            if let Some(pick) = pick.as_deref_mut() {
+                pick.consider(ChartTarget::Star(star.hip), p, 8.);
             }
         }
         if let (Some(point), Some(hip)) = (selected_point, selected) {
@@ -245,6 +273,5 @@ impl Chart<'_> {
                 Color32::GOLD,
             );
         }
-        pick
     }
 }
