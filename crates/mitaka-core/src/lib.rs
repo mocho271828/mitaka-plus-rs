@@ -1,14 +1,17 @@
 //! Mitaka Plus の天文データと座標計算。GUI に依存しない。
 #![forbid(unsafe_code)]
 pub mod astronomy;
+pub mod atmosphere;
 mod binary;
 pub mod catalog;
 pub mod data_root;
+pub mod eclipse;
 pub mod ephemeris;
 pub mod extended_catalog;
 pub mod galaxy;
 pub mod lunar;
 pub mod orbit;
+pub mod rotation;
 pub mod satellite;
 pub mod satellite_catalog;
 pub mod terrain;
