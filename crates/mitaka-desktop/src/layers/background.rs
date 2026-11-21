@@ -1,4 +1,5 @@
 //! Mitaka_plus f9fe624 の sky_background.mm と grid_geometry.cpp に基づく天の川背景。
+pub(crate) mod solar;
 use super::grid::{galactic_from_j2000, Vector};
 use crate::{
     chart::Chart,
