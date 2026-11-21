@@ -5,6 +5,7 @@ mod commands;
 mod fonts;
 mod galaxies;
 mod media_preview;
+mod objects;
 mod playback;
 mod projection;
 mod script_ui;
@@ -101,6 +102,7 @@ struct App {
     galaxies: Option<galaxies::Browser>,
     capture: Option<PathBuf>,
     canvas_rect: egui::Rect,
+    objects: objects::Browser,
     menus: Menus,
     view: View,
     sky: Camera,
@@ -143,6 +145,7 @@ impl App {
             galaxies: None,
             capture: None,
             canvas_rect: egui::Rect::ZERO,
+            objects: Default::default(),
             menus,
             view: View::Sky,
             sky: Camera::default(),
@@ -187,6 +190,7 @@ impl App {
                     if jd != self.jd {
                         self.set_date(jd);
                     }
+                    self.objects = Default::default();
                     self.solar = Default::default();
                     self.surface = None;
                     self.galaxies = None;
@@ -212,6 +216,7 @@ impl App {
             Command::SaveState => self.session_dialog(true),
             Command::Sky => self.view = View::Sky,
             Command::Horizon => self.view = View::Horizon,
+            Command::Objects => self.objects.open = true,
             Command::Settings => self.settings = true,
             Command::Search => self.search = true,
             Command::Galaxy => {
@@ -382,6 +387,7 @@ impl App {
         }
     }
     fn panels(&mut self, ctx: &egui::Context) {
+        self.object_panels(ctx);
         self.solar.panel(ctx);
         if let Some(g) = &mut self.galaxies {
             if self.view == View::Galaxy {
@@ -511,6 +517,7 @@ impl App {
             if let Err(e) = self.solar.draw(ui, &data.ephemeris, self.jd, &data.root) {
                 ui.label(e.to_string());
             }
+            self.object_in_solar(ui);
             return;
         }
         if self.view == View::Surface {
@@ -567,6 +574,7 @@ impl App {
             return;
         };
         let pick = chart.paint(&painter, data, &self.options, self.selected, click);
+        self.object_on_sky(&chart, &painter);
         if click.is_some() {
             self.selected = pick;
             ui.ctx().request_repaint();
