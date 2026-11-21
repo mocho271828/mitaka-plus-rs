@@ -120,11 +120,28 @@ impl App {
     fn script_message(&mut self, msg: &Value) -> Result<Value, String> {
         match msg["op"].as_str() {
             Some("snapshot") => Ok(
-                json!({"ok":true,"jd":self.jd,"lines":self.options.lines,"labels":self.options.labels,"timeSpeed":self.playback.plus_speed,"timeStepValue":self.playback.plus_value,"timeStep":self.playback.plus_step,"timeInfo":self.playback.show,"realtime":self.playback.realtime}),
+                json!({"ok":true,"jd":self.jd,"lines":self.options.lines,"labels":self.options.labels,"timeSpeed":self.playback.plus_speed,"timeStepValue":self.playback.plus_value,"timeStep":self.playback.plus_step,"timeInfo":self.playback.show,"realtime":self.playback.realtime,"planetOrbits":self.solar.orbits,"earthClouds":self.solar.surfaces.clouds,"earthCityLights":self.solar.surfaces.lights,"shadows":self.solar.surfaces.eclipse,"atmosphereMode":self.solar.surfaces.air as u8}),
             ),
             Some("apply") => {
                 match msg["kind"].as_u64() {
                     Some(kind @ (0 | 2 | 19 | 20 | 72..=78)) => self.time_action(kind, msg)?,
+                    Some(kind @ (29 | 69 | 70 | 79)) => {
+                        let flag = msg["enabled"].as_bool().ok_or("真偽値が必要です")?;
+                        match kind {
+                            29 => self.solar.orbits = flag,
+                            69 => self.solar.surfaces.clouds = flag,
+                            70 => self.solar.surfaces.lights = flag,
+                            _ => self.solar.surfaces.eclipse = flag,
+                        }
+                    }
+                    Some(71) => {
+                        let v = msg["number"]
+                            .as_f64()
+                            .filter(|n| n.fract() == 0.0 && (0. ..=2.).contains(n))
+                            .ok_or("大気モードの範囲外です")?;
+                        self.solar.surfaces.air =
+                            crate::solar::sphere::Air::from_index(v as u64).unwrap();
+                    }
                     Some(5) => {
                         self.options.lines = msg["enabled"].as_bool().ok_or("lines は真偽値です")?
                     }

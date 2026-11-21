@@ -216,6 +216,53 @@ impl App {
                     g.controls = true;
                 }
             }
+            Command::Land => {
+                let Some(data) = self.data.as_ref() else {
+                    return;
+                };
+                let ascend = matches!(self.view, View::Horizon | View::Surface);
+                let body = match self.view {
+                    View::Solar => self.solar.selected,
+                    View::Horizon => 3,
+                    View::Surface => self.surface.as_ref().map_or(3, |s| s.body),
+                    _ => {
+                        self.error =
+                            Some("地平図または太陽系で地球・火星を選択してください".into());
+                        return;
+                    }
+                };
+                let (lat, lon) = if self.view == View::Surface {
+                    self.surface
+                        .as_ref()
+                        .map_or((self.latitude, self.longitude), |s| (s.lat, s.lon))
+                } else {
+                    (self.latitude, self.longitude)
+                };
+                let result = (|| -> std::io::Result<()> {
+                    if body != 3 && body != 4 {
+                        return Err(std::io::Error::other(
+                            "地形の離着陸は地球と火星で利用できます",
+                        ));
+                    }
+                    let ground = surface::Surface::load(&data.root, body, lat, lon, 100.)?;
+                    self.solar.prepare(&data.ephemeris, self.jd)?;
+                    self.solar.begin_surface_flight(
+                        body,
+                        lat,
+                        lon,
+                        ground.central_height,
+                        self.jd,
+                        ascend,
+                    )?;
+                    self.surface = Some(ground);
+                    self.view = View::Solar;
+                    self.solar.show_controls = false;
+                    Ok(())
+                })();
+                if let Err(e) = result {
+                    self.error = Some(e.to_string());
+                }
+            }
             Command::Solar => self.view = View::Solar,
             Command::SolarControls => {
                 self.view = View::Solar;
@@ -457,7 +504,7 @@ impl App {
         }
         if self.view == View::Solar {
             let data = self.data.as_ref().unwrap();
-            if let Err(e) = self.solar.draw(ui, &data.ephemeris, self.jd) {
+            if let Err(e) = self.solar.draw(ui, &data.ephemeris, self.jd, &data.root) {
                 ui.label(e.to_string());
             }
             return;
@@ -526,6 +573,20 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         self.clock_frame(ctx);
         self.scripts_frame(ctx);
+        if self.view == View::Solar {
+            if let Some(body) = self.solar.landed.take() {
+                self.view = if body == 3 {
+                    View::Horizon
+                } else {
+                    View::Surface
+                };
+            }
+        }
+        if !ctx.wants_keyboard_input()
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::S))
+        {
+            self.execute(Command::Land, ctx);
+        }
         for command in self.menus.poll(ctx) {
             self.execute(command, ctx);
         }

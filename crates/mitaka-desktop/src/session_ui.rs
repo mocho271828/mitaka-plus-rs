@@ -57,6 +57,10 @@ impl App {
         v["planets"]["orbits"] = json!(self.solar.orbits);
         v["solar_camera"] = json!({"target":self.solar.camera.target, "distance_au":self.solar.camera.distance, "yaw_deg":self.solar.camera.yaw,"pitch_deg":self.solar.camera.pitch, "roll_deg":self.solar.camera.roll,"fov_deg":45.0,"frame":null,"frame_is_orbit":false});
         v["selected_body"] = json!(self.solar.selected);
+        let surface = &self.solar.surfaces;
+        v["earth_layers"] = json!({"clouds":surface.clouds,"city_lights":surface.lights});
+        v["eclipse"]["shadows"] = json!(surface.eclipse);
+        v["atmosphere"] = json!({"mode":surface.air as u8,"intensity":surface.intensity});
         let p = &self.playback;
         v["plus_time"] = json!({"speed":p.plus_speed,"step":p.plus_step,"value_days":p.plus_value});
         v["simulation_rate"] = json!(p.rate);
@@ -176,6 +180,13 @@ impl App {
         self.selected = None;
         self.surface = None;
         self.galaxies = None;
+        let surface = &mut self.solar.surfaces;
+        surface.clouds = v["earth_layers"]["clouds"].as_bool().unwrap();
+        surface.lights = v["earth_layers"]["city_lights"].as_bool().unwrap();
+        surface.eclipse = v["eclipse"]["shadows"].as_bool().unwrap();
+        surface.air =
+            crate::solar::sphere::Air::from_index(num(&v["atmosphere"], "mode") as u64).unwrap();
+        surface.intensity = num(&v["atmosphere"], "intensity");
         self.playback = Default::default();
         let p = &mut self.playback;
         p.plus_step = num(&v["plus_time"], "step") as usize;
