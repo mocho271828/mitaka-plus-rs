@@ -27,6 +27,12 @@ fn main() -> io::Result<()> {
             build.define("LUA_USE_LINUX", None);
             println!("cargo:rustc-link-lib=dl");
             println!("cargo:rustc-link-lib=m");
+            // Lua の Linux 用インタプリタと同様に、C 拡張が使う公開 API を解決可能にする。
+            for symbols in ["lua_*", "luaL_*", "luaopen_*"] {
+                println!(
+                    "cargo:rustc-link-arg-bin=mitaka-script=-Wl,--export-dynamic-symbol={symbols}"
+                );
+            }
         }
         Ok("windows") => {
             // luaconf.h はコンパイラが指定する _WIN32 で Windows 機能を選択する。
