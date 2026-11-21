@@ -55,8 +55,10 @@
 | 47 | shared-galaxy | ui・太陽系から銀河への共通視点 | SDSS分類、全件選択、v9復元を照合 | 650 | implemented |
 | 48 | physical-sky | ui・宇宙・地表の恒星点群 | 同じ視点からの地形・星・星座と遮蔽を比較 | 700 | implemented |
 | 49 | static-html | adapter・信頼したローカルHTMLの静的レイアウト | 表・CSS・リンクをローカル実表示し遷移と再照合を検証 | 450 | implemented |
-| 50 | physical-terrain | ui・地表メッシュを物理カメラに統合 | 地形の交点深度、光源、視点に対する稜線の照合 | 550 | not-started |
+| 50 | physical-terrain | ui・地表メッシュを物理カメラに統合 | 地形の交点深度、光源、視点に対する稜線の照合 | 550 | implemented |
 | 51 | horizon-transition | ui・地平図の離着陸と投影の引き継ぎ | 地上の姿勢と視野、切り替え開始・終了を照合 | 500 | not-started |
-| 52 | parity | contract・旧版機能と三OS配布の検証 | 機能別の対応実績、配布物と起動経路を検証 | 機能ごとに分割 | not-started |
+| 52 | object-occlusion | ui・軌道・探査機の地形遮蔽 | 旧描画順と地表でのクリック対象を照合 | 300 | not-started |
+| 53 | package-player | infra・各配布物のLuaと音声再生 | ネイティブデコーダーの再生・停止・シークを3 OSで検証 | 200 | not-started |
+| 54 | parity | contract・旧版機能と三OS配布の検証 | 機能別の対応実績、配布物と起動経路を検証 | 機能ごとに分割 | not-started |
 
 差分が複数のレビュー理由を持つ場合はその単位を分割する。親が変わる場合は先に表を修正し、レビュー指摘は責務を持つ親で直す。CI結果・実機結果・未実装項目を区別する。下位PRから順にレビューし、全機能の実装と検証が揃った時点でマージ作業へ引き継ぐ。

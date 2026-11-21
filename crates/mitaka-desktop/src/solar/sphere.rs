@@ -2,6 +2,7 @@
 use super::*;
 use eframe::egui::{ColorImage, TextureHandle, TextureOptions};
 use image::{ImageReader, RgbImage};
+use mitaka_core::terrain::Amplification;
 use std::{collections::HashMap, path::Path};
 
 const NAMES: [&str; 11] = [
@@ -90,7 +91,10 @@ struct Buffers<'a> {
 #[derive(Default)]
 pub struct Surfaces {
     files: HashMap<&'static str, Result<RgbImage, String>>,
-    cache: HashMap<usize, (Key, TextureHandle, Vec<bool>)>,
+    cache: HashMap<usize, (Key, TextureHandle, Vec<f64>)>,
+    terrains: HashMap<usize, terrain::Source>,
+    pub(super) mode: Amplification,
+    pub(super) preview: bool,
     drawn: Vec<usize>,
     pub clouds: bool,
     pub lights: bool,
@@ -101,6 +105,7 @@ pub struct Surfaces {
 }
 #[derive(PartialEq)]
 struct Key {
+    terrain: Option<(Amplification, bool)>,
     camera: SolarCamera,
     jd: f64,
     rect: Rect,
@@ -135,16 +140,25 @@ impl Surfaces {
         self.drawn.clear();
     }
     pub(super) fn opaque_at(&self, p: Pos2) -> bool {
-        self.drawn.iter().any(|id| {
-            let (key, image, ground) = &self.cache[id];
-            if !key.tile.contains(p) {
-                return false;
-            }
-            let [w, h] = image.size();
-            let x = (((p.x - key.tile.left()) / key.tile.width()) * w as f32) as usize;
-            let y = (((p.y - key.tile.top()) / key.tile.height()) * h as f32) as usize;
-            ground[y.min(h - 1) * w + x.min(w - 1)]
-        })
+        self.depth_at(p).is_finite()
+    }
+    pub(crate) fn depth_at(&self, p: Pos2) -> f64 {
+        self.drawn
+            .iter()
+            .map(|&id| self.body_depth_at(id, p))
+            .fold(f64::INFINITY, f64::min)
+    }
+    pub(super) fn body_depth_at(&self, id: usize, p: Pos2) -> f64 {
+        let Some((key, image, ground)) = self.cache.get(&id) else {
+            return f64::INFINITY;
+        };
+        if !key.tile.contains(p) {
+            return f64::INFINITY;
+        }
+        let [w, h] = image.size();
+        let x = (((p.x - key.tile.left()) / key.tile.width()) * w as f32) as usize;
+        let y = (((p.y - key.tile.top()) / key.tile.height()) * h as f32) as usize;
+        ground[y.min(h - 1) * w + x.min(w - 1)]
     }
     fn get(&mut self, name: &'static str, root: &Path) {
         self.files.entry(name).or_insert_with(|| {
@@ -192,7 +206,9 @@ impl Surfaces {
         if map.is_none() && tile != rect {
             return Ok(false);
         }
+        let displaced = terrain::near(camera, scene.bodies[index], index);
         let key = Key {
+            terrain: displaced.then_some((self.mode, self.preview)),
             camera,
             jd: scene.jd,
             rect,
@@ -221,7 +237,18 @@ impl Surfaces {
                 10 => mitaka_core::lunar::lunar_orientation(scene.jd)?,
                 _ => mitaka_core::rotation::planet_orientation(index - 1, scene.jd)?,
             };
-            let (image, ground) = rasterize(&key, scene, index, sources, axes)?;
+            let ground_source = if displaced {
+                let slot = match self.terrains.entry(index) {
+                    std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+                    std::collections::hash_map::Entry::Vacant(e) => {
+                        e.insert(terrain::Source::open(root, index)?)
+                    }
+                };
+                Some(slot)
+            } else {
+                None
+            };
+            let (image, ground) = rasterize(&key, scene, index, sources, axes, ground_source)?;
             let tex = painter.ctx().load_texture(
                 format!("planet-{index}"),
                 image,
@@ -246,7 +273,8 @@ fn rasterize(
     index: usize,
     maps: Buffers<'_>,
     axes: [Point; 3],
-) -> io::Result<(ColorImage, Vec<bool>)> {
+    source: Option<&mut terrain::Source>,
+) -> io::Result<(ColorImage, Vec<f64>)> {
     let tile = key.tile;
     let rect = key.rect;
     let camera = key.camera;
@@ -259,7 +287,7 @@ fn rasterize(
     let w = (tile.width() * sampling).ceil().max(1.) as usize;
     let h = (tile.height() * sampling).ceil().max(1.) as usize;
     let mut pixels = vec![Color32::TRANSPARENT; w * h];
-    let mut opaque = vec![false; w * h];
+    let mut distances = vec![f64::INFINITY; w * h];
     let eclipse = super::eclipse::surface(scene, index, key.eclipse)?;
     let mut atmosphere = match (key.air, index) {
         (Air::None, _) => None,
@@ -273,6 +301,20 @@ fn rasterize(
     let radius = RADII_KM[index] / AU_KM;
     let [right, up, outward] = camera.basis();
     let center = scene.bodies[index];
+    let displaced = if let Some((source, (mode, preview))) = source.zip(key.terrain) {
+        let view = terrain::View::new(
+            camera,
+            center,
+            axes,
+            radius,
+            [w, h],
+            f64::from(rect.width() / rect.height()),
+        );
+        Some(source.render(&view, mode, preview)?)
+    } else {
+        None
+    };
+    let transform = glam::DMat3::from_cols_array_2d(&axes);
     let eye = scale(
         plus(
             minus(camera.target, center),
@@ -306,9 +348,25 @@ fn rasterize(
             ));
             let mut rgb = [0.; 3];
             let mut filled = false;
-            let ground = intersection(eye, ray);
-            if let Some(normal) = ground {
-                let (u, v) = uv(normal, axes, offset);
+            let ground = match &displaced {
+                Some(frame) => {
+                    let sample = frame[y * w + x];
+                    sample.distance.is_finite().then(|| {
+                        (
+                            (transform * sample.normal).to_array(),
+                            sample.uv.x + offset,
+                            sample.uv.y,
+                            sample.distance,
+                        )
+                    })
+                }
+                None => intersection(eye, ray).map(|n| {
+                    let (u, v) = uv(n, axes, offset);
+                    (n, u, v, length(minus(eye, n)) * radius)
+                }),
+            };
+            if let Some((normal, u, v, distance)) = ground {
+                distances[y * w + x] = distance;
                 let cosine = dot(normal, sunlight);
                 let light = if index == 0 {
                     1.
@@ -330,9 +388,9 @@ fn rasterize(
                     rgb = plus(rgb, scale(sample(lights, u, v), gain * (-cosine).max(0.)));
                 }
                 if let Some(binding) = &eclipse {
-                    let footprint = length(minus(eye, normal)) * radius * f64::from(tile.height())
-                        / (h as f64 * focal);
-                    let effect = binding.effect(normal, footprint)?;
+                    let footprint = distance * f64::from(tile.height()) / (h as f64 * focal);
+                    let point = plus(center, plus(scale(eye, radius), scale(ray, distance)));
+                    let effect = binding.effect_at(point, normal, footprint)?;
                     rgb = effect
                         .border_rgb
                         .map(|b| scale(b, 255.))
@@ -346,7 +404,7 @@ fn rasterize(
                     view_direction: ray,
                     sun_direction: sunlight,
                     maximum_distance_m: ground
-                        .map(|normal| length(minus(eye, normal)) * params.ground_radius_m),
+                        .map(|(_, _, _, distance)| distance / radius * params.ground_radius_m),
                 };
                 let single = atmosphere::single_scattering(params, ray, 14)?;
                 let multiple = match maps
@@ -362,7 +420,14 @@ fn rasterize(
                 rgb = plus(rgb, add);
                 filled |= add.iter().any(|v| *v >= 0.5);
             }
-            if let (Some(cloud), Some(n)) = (maps.cloud, intersection(cloud_eye, ray)) {
+            let cloud_hit = maps.cloud.and_then(|c| {
+                intersection(cloud_eye, ray)
+                    .filter(|&n| {
+                        length(minus(cloud_eye, n)) * radius * cloud_scale < distances[y * w + x]
+                    })
+                    .map(|n| (c, n))
+            });
+            if let Some((cloud, n)) = cloud_hit {
                 let (u, v) = uv(n, axes, offset);
                 let cloud = scale(
                     sample(cloud, u, v),
@@ -380,8 +445,7 @@ fn rasterize(
             if filled {
                 let p = y * w + x;
                 let [r, g, b] = rgb.map(|v| v.round().clamp(0., 255.) as u8);
-                opaque[p] = ground.is_some();
-                pixels[p] = if opaque[p] {
+                pixels[p] = if ground.is_some() {
                     Color32::from_rgb(r, g, b)
                 } else {
                     Color32::from_rgb_additive(r, g, b)
@@ -394,7 +458,7 @@ fn rasterize(
             size: [w, h],
             pixels,
         },
-        opaque,
+        distances,
     ))
 }
 

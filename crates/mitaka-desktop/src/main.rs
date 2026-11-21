@@ -660,6 +660,7 @@ impl App {
                 data,
                 jd: self.jd,
                 picking: self.picking,
+                terrain_mode: self.terrain_amplification,
                 layers: &self.options.layers,
                 galaxies,
                 surface_site: self.motion.site.as_mut(),
@@ -849,11 +850,16 @@ impl eframe::App for App {
         self.media.frame(ctx);
         if self.view == View::Solar {
             if let Some(body) = self.solar.landed.take() {
-                self.view = if body == 3 {
-                    View::Horizon
-                } else {
-                    View::Surface
-                };
+                self.solar.stop();
+                if body == 3 {
+                    self.view = View::Horizon;
+                } else if let Some(ground) = self.surface.as_ref().filter(|g| g.body == body) {
+                    self.motion.site = Some(camera_control::session::Site::from_surface(
+                        ground,
+                        self.horizon,
+                    ));
+                    self.view = View::Solar;
+                }
             }
         }
         if !ctx.wants_keyboard_input()
