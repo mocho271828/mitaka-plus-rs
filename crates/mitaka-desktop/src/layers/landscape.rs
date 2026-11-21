@@ -272,6 +272,11 @@ impl LandscapeRenderer {
             })
         })
     }
+    pub fn paint_flight(&self, painter: &Painter, f: crate::solar::surface_flight::Overlay) {
+        if let Some(c) = &self.cached {
+            f.image(painter, c.texture.id(), f.rect)
+        }
+    }
     pub fn paint(&self, painter: &Painter, rect: Rect) {
         if let Some(c) = &self.cached {
             painter.image(

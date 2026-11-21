@@ -50,7 +50,7 @@ impl Site {
             last: None,
         }
     }
-    fn from_camera(
+    pub(crate) fn from_camera(
         body: usize,
         center: DVec3,
         jd: f64,

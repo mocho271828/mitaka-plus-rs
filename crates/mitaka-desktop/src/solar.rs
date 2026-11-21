@@ -1,10 +1,13 @@
 //! CF96 の太陽中心J2000赤道座標を黄道座標へ変換し、AUのまま透視投影する。
 mod eclipse;
+mod flight_projection;
 pub(crate) mod precise;
 mod scales;
 pub(crate) mod sky;
 pub(crate) mod sphere;
+pub(crate) mod surface_flight;
 mod terrain;
+use crate::{camera_control::session::Site, projection::Camera};
 use eframe::egui::{self, Color32, Pos2, Rect, Stroke};
 use mitaka_core::{
     astronomy::j2000_equatorial_to_ecliptic,
@@ -12,6 +15,7 @@ use mitaka_core::{
     lunar::{earth_center, lunar_position},
 };
 use std::{io, time::Instant};
+use surface_flight::SurfaceFlight;
 
 pub const NAMES: [&str; 11] = [
     "太陽",
@@ -181,41 +185,6 @@ struct Flight {
     source: SolarCamera,
     duration: f64,
 }
-struct SurfaceFlight {
-    body: usize,
-    lat: f64,
-    lon: f64,
-    height_m: f64,
-    started: Instant,
-    duration: f64,
-    source: SolarCamera,
-    ascend: bool,
-}
-struct SurfaceTarget {
-    lon: f64,
-    lat: f64,
-    distance: f64,
-}
-fn site_target(
-    body: usize,
-    lat: f64,
-    lon: f64,
-    height_m: f64,
-    jd: f64,
-) -> io::Result<SurfaceTarget> {
-    let axes = mitaka_core::rotation::planet_orientation(body - 1, jd)?;
-    let (sl, cl) = lat.to_radians().sin_cos();
-    let (so, co) = lon.to_radians().sin_cos();
-    let normal = plus(
-        plus(scale(axes[0], cl * co), scale(axes[1], cl * so)),
-        scale(axes[2], sl),
-    );
-    Ok(SurfaceTarget {
-        lon: normal[1].atan2(normal[0]).to_degrees(),
-        lat: normal[2].clamp(-1., 1.).asin().to_degrees(),
-        distance: (RADII_KM[body] + (height_m + 2.) / 1000.) / KM_PER_AU,
-    })
-}
 fn angle_lerp(a: f64, b: f64, f: f64) -> f64 {
     a + ((b - a + 180.).rem_euclid(360.) - 180.) * f
 }
@@ -228,6 +197,7 @@ pub(crate) struct ViewSettings<'a> {
     pub observer: [f64; 2],
     pub galaxies: &'a mut crate::galaxies::Browser,
     pub star_display: sky::Display,
+    pub horizon_camera: Camera,
     pub terrain_mode: mitaka_core::terrain::Amplification,
 }
 pub struct Solar {
@@ -243,6 +213,8 @@ pub struct Solar {
     eclipse_source: Option<Result<eclipse::Source, String>>,
     eclipse_overlay: eclipse::Overlay,
     surface_flight: Option<SurfaceFlight>,
+    pub(crate) horizon_overlay: Option<surface_flight::Overlay>,
+    pub(crate) flight_site: Option<Site>,
     pub landed: Option<usize>,
     pub sky_selection: Option<sky::Selection>,
     pub sky_pick: Option<sky::Selection>,
@@ -262,6 +234,8 @@ impl Default for Solar {
             eclipse_source: None,
             eclipse_overlay: Default::default(),
             surface_flight: None,
+            horizon_overlay: None,
+            flight_site: None,
             landed: None,
             sky_selection: None,
             sky_pick: None,
@@ -290,83 +264,53 @@ impl Solar {
         self.camera.target = dest;
         self.camera.distance = RADII_KM[body] * 6. / KM_PER_AU;
     }
-    pub fn begin_surface_flight(
-        &mut self,
-        body: usize,
-        lat: f64,
-        lon: f64,
-        height_m: f64,
-        jd: f64,
-        ascend: bool,
-    ) -> io::Result<()> {
-        let site = site_target(body, lat, lon, height_m, jd)?;
-        let scene = self
-            .scene
-            .as_ref()
+    pub fn begin_surface_flight(&mut self, ground: Site, jd: f64, ascend: bool) -> io::Result<()> {
+        let center = self
+            .body_point(ground.body)
             .ok_or_else(|| io::Error::other("太陽系データがありません"))?;
-        let center = scene.bodies[body];
-        if ascend {
-            self.camera = SolarCamera {
-                precise_target: None,
-                target: center,
-                fov: self.camera.fov,
-                frame: None,
-                frame_is_orbit: false,
-                yaw: site.lon,
-                pitch: site.lat,
-                roll: 0.,
-                distance: site.distance,
-            };
+        let source = if ascend {
+            None
         } else {
-            self.approach(body)?;
-        }
-        self.camera.frame = None;
-        self.camera.frame_is_orbit = false;
-        self.selected = body;
-        self.follow = false;
-        self.flight = None;
-        self.landed = None;
-        self.surface_flight = Some(SurfaceFlight {
-            body,
-            lat,
-            lon,
-            height_m,
-            started: Instant::now(),
-            duration: 7.1,
-            source: self.camera,
-            ascend,
-        });
+            self.flight_site
+                .filter(|s| s.body == ground.body)
+                .or_else(|| {
+                    Site::from_camera(ground.body, center.into(), jd, self.camera, false).ok()
+                })
+                .map(|s| Site {
+                    height: (s.height + s.terrain - ground.terrain).max(0.002),
+                    terrain: ground.terrain,
+                    ..s
+                })
+        };
+        let flight = SurfaceFlight::new(ground, source, ascend);
+        self.stop();
+        self.selected = ground.body;
+        flight.from.pose(center.into(), jd, &mut self.camera)?;
+        self.flight_site = Some(flight.from);
+        self.surface_flight = Some(flight);
         Ok(())
     }
     fn tick_surface(&mut self, jd: f64) -> io::Result<bool> {
-        let Some(move_) = &self.surface_flight else {
+        let Some(f) = &self.surface_flight else {
             return Ok(false);
         };
-        let body = move_.body;
-        let site = site_target(body, move_.lat, move_.lon, move_.height_m, jd)?;
-        let t = if move_.duration == 0. {
+        let t = if f.duration == 0. {
             1.
         } else {
-            (move_.started.elapsed().as_secs_f64() / move_.duration).min(1.)
+            (f.started.elapsed().as_secs_f64() / f.duration).min(1.)
         };
-        let fraction = (1. - (t * std::f64::consts::PI).cos()) * 0.5;
-        let distance = if move_.ascend {
-            RADII_KM[body] * 6. / KM_PER_AU
-        } else {
-            site.distance
-        };
-        self.camera.distance =
-            ((1. - fraction) * move_.source.distance.ln() + fraction * distance.ln()).exp();
-        self.camera.target = self.scene.as_ref().unwrap().bodies[body];
-        self.camera.yaw = angle_lerp(move_.source.yaw, site.lon, fraction);
-        self.camera.pitch = move_.source.pitch + (site.lat - move_.source.pitch) * fraction;
-        self.camera.roll = angle_lerp(move_.source.roll, 0., fraction);
+        let site = f.at(t);
+        site.pose(
+            self.body_point(site.body).unwrap().into(),
+            jd,
+            &mut self.camera,
+        )?;
+        self.flight_site = Some(site);
         if t >= 1. {
-            if !move_.ascend {
-                self.landed = Some(body);
+            if !f.ascend {
+                self.landed = Some(site.body);
             }
             self.surface_flight = None;
-            self.follow = true;
         }
         Ok(true)
     }
@@ -399,6 +343,8 @@ impl Solar {
         self.follow = false;
         self.flight = None;
         self.surface_flight = None;
+        self.flight_site = None;
+        self.horizon_overlay = None;
         self.landed = None;
     }
     pub fn panel(&mut self, ctx: &egui::Context) {
@@ -477,6 +423,7 @@ impl Solar {
             galaxies,
             star_display,
             terrain_mode,
+            horizon_camera,
         } = settings;
         let system = &data.ephemeris;
         let root = &data.root;
@@ -588,7 +535,7 @@ impl Solar {
             layers,
             display: star_display,
             selected: self.sky_selection,
-            apparent: has_site || self.surface_flight.is_some(),
+            apparent: has_site || self.flight_site.is_some(),
             preview: response.dragged() || self.flight.is_some(),
         };
         let sky_hits = sky.draw(&painter, rect, self.camera, click);
@@ -598,6 +545,12 @@ impl Solar {
         let nearest_terrain = [3, 4]
             .into_iter()
             .find(|&i| terrain::near(self.camera, scene.bodies[i], i));
+        self.horizon_overlay = self
+            .surface_flight
+            .as_ref()
+            .filter(|f| f.horizon)
+            .and(self.flight_site)
+            .and_then(|s| surface_flight::Overlay::new(s, self.camera, horizon_camera, rect));
         scales::paint(&painter, rect, self.camera, layers, observer, jd);
         if self.orbits {
             let stroke = Stroke::new(0.7_f32, Color32::from_rgb(59, 77, 100));
@@ -810,9 +763,7 @@ mod tests {
         assert!(c.project(scale(c.basis()[2], 101.), rect).is_none());
     }
     #[test]
-    fn site_matches_reference_radius_and_crosses_angle_seam() {
-        let s = site_target(3, 35.68, 139.76, -100., 2451545.).unwrap();
-        assert!((s.distance * KM_PER_AU - (RADII_KM[3] - 0.098)).abs() < 1e-9);
+    fn low_altitude_view_preserves_shortest_heading_arc() {
         assert_eq!(angle_lerp(179., -179., 0.5), 180.);
     }
     #[test]
@@ -832,16 +783,16 @@ mod tests {
             ..Solar::default()
         };
         for ascending in [false, true] {
-            solar
-                .begin_surface_flight(3, 35., 139., 8., jd, ascending)
-                .unwrap();
+            let ground = Site::ground(3, 35., 139., 8., Camera::default());
+            solar.begin_surface_flight(ground, jd, ascending).unwrap();
             solar.surface_flight.as_mut().unwrap().started =
                 Instant::now() - std::time::Duration::from_secs(8);
             assert!(solar.tick_surface(jd).unwrap());
             assert!(!solar.tick_surface(jd).unwrap());
-            assert_eq!(solar.camera.target, bodies[3]);
+            let s = solar.flight_site.unwrap();
+            assert_eq!(s.body, 3);
             let radius = if ascending {
-                RADII_KM[3] * 6.
+                RADII_KM[3] * (1. + 7.5 * 617.3 / 2000.)
             } else {
                 RADII_KM[3] + 0.010
             };
