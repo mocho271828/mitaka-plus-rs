@@ -30,10 +30,11 @@
 | 22 | satellite-positions | domain・日心衛星位置と冥王星系の重心補正 | 英日定義とC++基準値、ブラウザの位置契約 | 500 | implemented |
 | 23 | desktop-controls | ui・スクリプトコンソールとデスクトップ操作 | 実Luaの出力、履歴、取消、全画面と画像出力 | 650 | implemented |
 | 24 | object-orbits | ui・探査機の点・軌跡と選択 | 同時刻標本と投影、旧描画の比較 | 500 | implemented |
-| 25 | session-selections | contract・セッションの天体選択、保存した設定と復帰 | カタログの実指紋と旧版の再読込を検証 | 500 | not-started |
-| 26 | display-layers | ui・座標グリッド、恒星・星座と観測地点 | 実カタログの識別と合成投影、描画を照合 | 950 | not-started |
-| 27 | landscape | ui・地平線の地点別パノラマ | 読取専用原画像と方位・仰角を照合 | 500 | not-started |
-| 28 | camera-controls | ui・カメラの操作とLua | 手動操作と時刻補間、投影と復元を検証 | 900 | not-started |
-| 29 | parity | contract・旧版機能と三OS配布の検証 | 機能別の対応実績、配布物と起動経路を検証 | 機能ごとに分割 | not-started |
+| 25 | session-selections | contract・セッションの天体選択、保存した設定と復帰 | カタログの実指紋と旧版の再読込を検証 | 500 | implemented |
+| 26 | projection-window | ui・別ウィンドウへの星図投影 | 同じ描画命令を2画面に表示し、投影の暗転とポインターを検証 | 350 | not-started |
+| 27 | display-layers | ui・座標グリッド、恒星・星座と観測地点 | 実カタログの識別と合成投影、描画を照合 | 950 | not-started |
+| 28 | landscape | ui・地平線の地点別パノラマ | 読取専用原画像と方位・仰角を照合 | 500 | not-started |
+| 29 | camera-controls | ui・カメラの操作とLua | 手動操作と時刻補間、投影と復元を検証 | 900 | not-started |
+| 30 | parity | contract・旧版機能と三OS配布の検証 | 機能別の対応実績、配布物と起動経路を検証 | 機能ごとに分割 | not-started |
 
 差分が複数のレビュー理由を持つ場合はその単位を分割する。親が変わる場合は先に表を修正し、レビュー指摘は責務を持つ親で直す。CI結果・実機結果・未実装項目を区別する。下位PRから順にレビューし、全機能の実装と検証が揃った時点でマージ作業へ引き継ぐ。
