@@ -103,6 +103,26 @@ impl Playback {
             days_per_second: rate,
         });
     }
+    fn set_tracking(&mut self, enabled: bool) {
+        if self.realtime != enabled {
+            self.stop();
+            self.realtime = enabled;
+        }
+    }
+
+    fn set_plus_step(&mut self, jd: f64, step: usize, value: f64) -> Result<(), String> {
+        let rate = value * f64::from(self.plus_speed);
+        if !(rate * 86400.).is_finite() {
+            return Err("再生速度の範囲外です".into());
+        }
+        self.plus_step = step;
+        self.plus_value = value;
+        // 通常再生・時計追従・日時補間の間もPlusのステップを設定できる。
+        if self.plus_speed != 0 {
+            self.start(jd, rate);
+        }
+        Ok(())
+    }
     fn sample(&mut self, now: Instant, bounds: [f64; 2]) -> Option<f64> {
         let c = self.clock.as_mut()?;
         if now
@@ -240,6 +260,14 @@ impl App {
         self.playback.stop();
         Ok(())
     }
+    fn set_realtime(&mut self, enabled: bool) -> Result<(), String> {
+        if enabled && !self.playback.realtime {
+            let current = UNIX_EPOCH_JD + Utc::now().timestamp_millis() as f64 / 86400000.;
+            self.apply_date(current)?;
+        }
+        self.playback.set_tracking(enabled);
+        Ok(())
+    }
     pub(super) fn time_action(&mut self, kind: u64, msg: &serde_json::Value) -> Result<(), String> {
         let n = || msg["number"].as_f64().ok_or("数値が必要です");
         let enabled = || msg["enabled"].as_bool().ok_or("真偽値が必要です");
@@ -255,11 +283,7 @@ impl App {
                 p.stop();
                 return Ok(());
             }
-            19 => {
-                p.stop();
-                p.realtime = enabled()?;
-                return Ok(());
-            }
+            19 => return self.set_realtime(enabled()?),
             20 => {
                 p.show = enabled()?;
                 return Ok(());
@@ -269,32 +293,24 @@ impl App {
                 if v.fract() != 0. || !(0. ..12.).contains(&v) {
                     return Err("不正な日時ステップです".into());
                 }
-                p.plus_step = v as usize;
-                p.plus_value = DAYS[p.plus_step];
+                let step = v as usize;
+                return p.set_plus_step(self.jd, step, DAYS[step]);
             }
             73 => {
                 let v = n()?;
-                if !(v * f64::from(p.plus_speed)).is_finite() {
-                    return Err("再生速度の範囲外です".into());
-                }
-                p.plus_value = v;
-                p.plus_step = 11;
+                return p.set_plus_step(self.jd, 11, v);
             }
             74 => {
                 let v = n()?.trunc();
                 if !(f64::from(i32::MIN)..=f64::from(i32::MAX)).contains(&v)
-                    || !(v * p.plus_value).is_finite()
+                    || !(v * p.plus_value * 86400.).is_finite()
                 {
                     return Err("再生速度の範囲外です".into());
                 }
                 p.plus_speed = v as i32;
             }
-            75 => {
-                p.plus_step = p.plus_step.saturating_sub(1);
-            }
-            76 => {
-                p.plus_step = (p.plus_step + 1).min(9);
-            }
+            75 => return p.set_plus_step(self.jd, p.plus_step.saturating_sub(1), p.plus_value),
+            76 => return p.set_plus_step(self.jd, (p.plus_step + 1).min(9), p.plus_value),
             77 | 78 => return self.date_step(true, if kind == 77 { 1 } else { -1 }),
             _ => return Err("未対応の時刻操作です".into()),
         }
@@ -328,13 +344,11 @@ impl App {
                         }
                     }
                 });
-            if ui
-                .checkbox(&mut self.playback.realtime, "現在時刻に同期")
-                .changed()
-            {
-                self.playback.animation = None;
-                self.playback.clock = None;
-                self.playback.plus_speed = 0;
+            let mut realtime = self.playback.realtime;
+            if ui.checkbox(&mut realtime, "現在時刻に同期").changed() {
+                if let Err(e) = self.set_realtime(realtime) {
+                    self.error = Some(e);
+                }
             }
         });
         ui.horizontal(|ui| {
@@ -443,6 +457,37 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn step_settings_leave_other_time_modes_running() {
+        let mut p = Playback::default();
+        p.start(100., -2.);
+        let start = p.clock.as_ref().unwrap().anchor;
+        p.set_tracking(false);
+        p.set_plus_step(100., 1, DAYS[1]).unwrap();
+        assert_eq!(
+            p.sample(start + Duration::from_millis(500), [90., 110.]),
+            Some(99.)
+        );
+        p.set_tracking(true);
+        p.set_plus_step(100., 4, DAYS[4]).unwrap();
+        assert!(p.realtime && p.clock.is_none());
+        p.set_tracking(false);
+        p.animation = Some(TimeAnimation {
+            start,
+            from: 100.,
+            to: 110.,
+            seconds: 5.,
+            smooth: false,
+        });
+        p.set_plus_step(100., 5, DAYS[5]).unwrap();
+        assert!(p.animation.is_some());
+
+        p.plus_speed = 2;
+        p.set_plus_step(100., 11, -1.).unwrap();
+        assert_eq!(p.clock.as_ref().unwrap().days_per_second, -2.);
+        assert!(p.set_plus_step(100., 11, f64::MAX).is_err());
+        assert_eq!(p.plus_value, -1.);
+    }
     #[test]
     fn animation_preserves_endpoints_and_half_cosine() {
         let start = Instant::now();
