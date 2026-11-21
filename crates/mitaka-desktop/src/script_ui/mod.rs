@@ -128,6 +128,7 @@ impl App {
             Some("snapshot") => Ok(self.camera_snapshot(self.options.layers.snapshot(json!({
                 "ok":true,
                 "jd":self.jd,
+                "targetSelectionMode":self.picking as u8,
                 "plusTimeZoneWestSeconds":self.session.0["plus_time_zone"]["seconds_west_utc"],
                 "lines":self.options.lines,
                 "labels":self.options.labels,
@@ -182,6 +183,13 @@ impl App {
                             17 => self.projector.open = enabled,
                             _ => ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(enabled)),
                         }
+                    }
+                    Some(106) => {
+                        self.picking = msg["number"]
+                            .as_f64()
+                            .filter(|n| n.fract() == 0. && (0. ..=2.).contains(n))
+                            .and_then(|n| crate::viewer::Picking::from_index(n as u64))
+                            .ok_or("選択モードの範囲外です")?;
                     }
                     Some(18) => self.execute(crate::commands::Command::Export, ctx),
                     Some(42) => self.execute(crate::commands::Command::Fullscreen, ctx),
@@ -457,6 +465,15 @@ impl App {
         let file = local_source(
             dir.path(),
             r#"
+Targets.selectMode = 1
+assert(Targets.selectMode == 1)
+Targets.selectMode = 2
+Grids.squareScales=true
+assert(Grids.squareScales)
+Renderer.textSmooth=false
+Renderer.lineSmooth=false
+Renderer.pointSmooth=false
+assert(not Renderer.textSmooth and not Renderer.lineSmooth)
 local saved = Time.JD
 Time:setTime(2000,2,30,3,4,5)
 assert(Time:getTimeString() == '2000,3,1,3,4,5')

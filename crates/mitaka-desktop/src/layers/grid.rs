@@ -40,6 +40,10 @@ fn galactic_basis() -> &'static [Vector; 3] {
         [c, cross(n, c), n]
     })
 }
+pub(crate) fn galactic_to_j2000(v: Vector) -> Vector {
+    let basis = galactic_basis();
+    std::array::from_fn(|i| basis[0][i] * v[0] + basis[1][i] * v[1] + basis[2][i] * v[2])
+}
 pub(super) fn galactic_from_j2000(v: Vector) -> Vector {
     // GC と GN の公称位置は厳密に直交しないため、順変換の基底の逆行列を使う。
     static INVERSE: OnceLock<[Vector; 3]> = OnceLock::new();
@@ -59,8 +63,7 @@ fn to_equatorial(system: System, point: [f64; 2]) -> [f64; 2] {
     let v = if system == System::Ecliptic {
         j2000_ecliptic_to_equatorial(v).expect("unit vector")
     } else {
-        let basis = galactic_basis();
-        std::array::from_fn(|i| basis[0][i] * v[0] + basis[1][i] * v[1] + basis[2][i] * v[2])
+        galactic_to_j2000(v)
     };
     equatorial_coordinates(v).expect("nonzero grid direction")
 }
