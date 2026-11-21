@@ -333,6 +333,54 @@ impl Catalog {
         }
         Some(dates.into_iter().map(|t| record.position(t).ok()).collect())
     }
+    pub(super) fn satellite_source(&self, row: usize) -> Option<usize> {
+        if let Key::Satellite(source, _) = self.rows.get(row)?.target {
+            Some(source)
+        } else {
+            None
+        }
+    }
+    pub(super) fn script_row(
+        &self,
+        prefix: &str,
+        name: &str,
+        satellite_source: Option<usize>,
+    ) -> io::Result<usize> {
+        let mut matches =
+            self.rows
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| match (&self.store, &row.target) {
+                    (Store::Small(d), Key::Small(s, i)) => {
+                        let r = &d.sources[*s].records[*i];
+                        let expected = match prefix {
+                            "Asteroids" => small_body::Kind::Asteroid,
+                            "TNO" => small_body::Kind::TransNeptunian,
+                            _ => small_body::Kind::Comet,
+                        };
+                        r.kind == expected
+                            && (name
+                                .parse::<i32>()
+                                .ok()
+                                .is_some_and(|n| n > 0 && r.number == Some(n))
+                                || r.name_bytes == name.as_bytes()
+                                || r.aliases.iter().any(|a| a == name.as_bytes()))
+                    }
+                    (Store::Craft(c), Key::Craft(i)) => c.match_name(*i, name),
+                    (Store::Satellites(_), Key::Satellite(s, _)) => {
+                        satellite_source.is_none_or(|selected| selected == *s)
+                            && row.label.split_whitespace().next() == Some(name)
+                    }
+                    _ => false,
+                });
+        let (i, _) = matches
+            .next()
+            .ok_or_else(|| error("天体名が見つかりません"))?;
+        if matches.next().is_some() {
+            return Err(error("複数の原記録がこの天体名に一致します"));
+        }
+        Ok(i)
+    }
     pub(super) fn locate(&self, i: usize, sky: &SkyData, jd: f64) -> io::Result<Position> {
         if let Store::Sdss(_, rows) = &self.store {
             let r = rows.get(i).ok_or_else(|| error("記録が見つかりません"))?;

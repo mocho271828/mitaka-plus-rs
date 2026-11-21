@@ -1,3 +1,4 @@
+mod camera_control;
 mod capture;
 mod catalog;
 mod chart;
@@ -95,6 +96,7 @@ impl Args {
     }
 }
 struct App {
+    motion: camera_control::State,
     landscape_render: layers::landscape::LandscapeRenderer,
     projector: projector::Projector,
     media: media_preview::Media,
@@ -142,6 +144,7 @@ impl App {
         let utc = utc_date(jd).ok_or("日時の範囲外です")?;
         Ok(Self {
             data: initial,
+            motion: Default::default(),
             landscape_render: Default::default(),
             projector: Default::default(),
             media: Default::default(),
@@ -202,6 +205,7 @@ impl App {
                     if jd != self.jd {
                         self.set_date(jd);
                     }
+                    self.motion = Default::default();
                     self.objects = Default::default();
                     self.solar = Default::default();
                     self.surface = None;
@@ -254,7 +258,11 @@ impl App {
                 let Some(data) = self.data.as_ref() else {
                     return;
                 };
-                let ascend = matches!(self.view, View::Horizon | View::Surface);
+                let ascend = matches!(self.view, View::Horizon | View::Surface)
+                    || self
+                        .motion
+                        .site
+                        .is_some_and(|s| self.view == View::Solar && s.height <= 0.002000001);
                 let body = match self.view {
                     View::Solar => self.solar.selected,
                     View::Horizon => 3,
@@ -288,6 +296,7 @@ impl App {
                         self.jd,
                         ascend,
                     )?;
+                    self.motion.site = None;
                     self.surface = Some(ground);
                     self.view = View::Solar;
                     self.solar.show_controls = false;
@@ -298,6 +307,7 @@ impl App {
                 }
             }
             Command::Solar => self.view = View::Solar,
+            Command::CameraControls => self.motion.controls = true,
             Command::SolarControls => {
                 self.view = View::Solar;
                 self.solar.show_controls = true;
@@ -429,6 +439,7 @@ impl App {
                 ui.label("天文データ・画像の権利は各制作者に帰属します。");
             });
         self.projector.settings(ctx);
+        self.camera_controls(ctx);
         self.object_panels(ctx);
         self.solar.panel(ctx);
         if let Some(g) = &mut self.galaxies {
@@ -655,7 +666,7 @@ impl App {
                 &data.layers.landscapes,
                 &data.layers.places,
                 &self.options.layers.observer,
-                (camera, 0.),
+                (camera, camera.roll),
                 rect,
             );
         }
@@ -677,6 +688,7 @@ impl App {
 }
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+        self.camera_frame(ctx);
         self.clock_frame(ctx);
         self.scripts_frame(ctx);
         self.media.frame(ctx);
