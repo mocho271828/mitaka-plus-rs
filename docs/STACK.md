@@ -42,7 +42,7 @@
 | 34 | script-calendar | adapter・旧LuaのUTC・地方時と日時補間 | 日時の繰越、時差・実Luaの往復、補間終端 | 450 | implemented |
 | 35 | registered-media | adapter・登録メディアと制御 | 旧登録名と順序、ローカルメディアを比較 | 900 | implemented |
 | 36 | milky-way | ui・全天・地平図の銀河背景 | 元の写真・銀河座標と遮蔽、表示設定を検証 | 450 | implemented |
-| 37 | camera-targets | ui・名前で指定した銀河・球状星団・星座の追従 | 登録名と物理位置の対照、同名の拒否 | 400 | not-started |
+| 37 | camera-targets | ui・名前で指定した銀河・球状星団・星座の追従 | 登録名と物理位置の対照、同名の拒否 | 400 | implemented |
 | 38 | viewer-controls | ui・ポインター選択、距離目盛と表示設定 | Lua・手動変更とセッションの整合 | 500 | not-started |
 | 39 | sky-deep-catalogs | ui・全天図のNGC・SDSSと地平姿勢 | 全銀河の密度積算と投影座標の対照 | 600 | not-started |
 | 40 | eclipse-layers | ui・食の境界、本影と半影の円錐 | 旧版の遮蔽物と接線位置の照合 | 550 | not-started |
