@@ -160,7 +160,7 @@ impl App {
                 "shadowUmbra":self.solar.surfaces.eclipse.umbra,
                 "shadowPenumbra":self.solar.surfaces.eclipse.penumbra,
                 "atmosphereMode":self.solar.surfaces.air as u8,
-                "fullScreen":ctx.input(|i| i.viewport().fullscreen.unwrap_or(false)),
+                "fullScreen":self.fullscreen.actual(ctx),
                 "targetBrowser":self.objects.open,
                 "timeSetting":self.settings,
                 "placeSetting":self.settings,
@@ -229,7 +229,7 @@ impl App {
                             14 | 15 => self.settings = enabled,
                             16 => self.scripts.panel = enabled,
                             17 => self.projector.open = enabled,
-                            _ => ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(enabled)),
+                            _ => self.fullscreen.request(ctx, Some(enabled))?,
                         }
                     }
                     Some(kind @ 44..=59) => self
@@ -244,7 +244,7 @@ impl App {
                             .ok_or("選択モードの範囲外です")?;
                     }
                     Some(18) => self.execute(crate::commands::Command::Export, ctx),
-                    Some(42) => self.execute(crate::commands::Command::Fullscreen, ctx),
+                    Some(42) => self.fullscreen.request(ctx, None)?,
                     Some(43) => self.execute(crate::commands::Command::About, ctx),
                     Some(86) => {
                         let raw = msg["number"]

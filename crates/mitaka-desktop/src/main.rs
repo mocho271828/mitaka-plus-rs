@@ -5,6 +5,7 @@ mod chart;
 mod commands;
 mod deep_sky;
 mod fonts;
+mod fullscreen;
 mod galaxies;
 mod layers;
 mod media_preview;
@@ -90,6 +91,7 @@ struct App {
     background_render: layers::background::Renderer,
     landscape_render: layers::landscape::LandscapeRenderer,
     projector: projector::Projector,
+    fullscreen: fullscreen::Fullscreen,
     media: media_preview::Media,
     scripts: script_ui::Scripts,
     playback: playback::Playback,
@@ -152,6 +154,7 @@ impl App {
             capture: None,
             canvas_rect: egui::Rect::ZERO,
             objects: Default::default(),
+            fullscreen: fullscreen::Fullscreen::new(cc)?,
             menus,
             view: View::Sky,
             sky: Camera::default(),
@@ -286,9 +289,11 @@ impl App {
                 self.projector.controls = true;
                 self.projector.open = true;
             }
-            Command::Fullscreen => ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(
-                !ctx.input(|i| i.viewport().fullscreen.unwrap_or(false)),
-            )),
+            Command::Fullscreen => {
+                if let Err(error) = self.fullscreen.request(ctx, None) {
+                    self.error = Some(error.into());
+                }
+            }
             Command::About => self.about = true,
             Command::RunScript => self.script_file(ctx),
             Command::ScriptPanel => self.scripts.panel = true,
@@ -927,6 +932,9 @@ impl App {
 }
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+        if let Err(error) = self.fullscreen.poll(ctx) {
+            self.error = Some(error.into());
+        }
         self.camera_frame(ctx);
         self.clock_frame(ctx);
         if self
