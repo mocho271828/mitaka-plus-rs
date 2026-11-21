@@ -177,7 +177,10 @@ impl Smoke {
             }
             return Ok(false);
         }
-        if scene == Scene::Sky && !app.projector.verified() {
+        if scene == Scene::Sky && app.projector.open {
+            if app.projector.verified() {
+                app.projector.open = false;
+            }
             return Ok(false);
         }
         if scene == Scene::Galaxy {
