@@ -17,6 +17,7 @@ mod projector;
 mod script_ui;
 mod session;
 mod session_ui;
+mod shortcuts;
 mod smoke;
 mod solar;
 mod surface;
@@ -288,6 +289,18 @@ impl App {
             self.interrupt_journey();
         }
         match command {
+            Command::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            Command::ZoomIn | Command::ZoomOut => {
+                let view = self.view;
+                if matches!(view, View::Sky | View::Horizon) {
+                    let factor = if command == Command::ZoomIn {
+                        1.5
+                    } else {
+                        1. / 1.5
+                    };
+                    self.camera().zoom_at(view, factor, [0.5, 0.5]);
+                }
+            }
             Command::Open => self.open(),
             Command::Media => self.media.choose(ctx),
             Command::MediaList => self.media.browser = true,
@@ -945,19 +958,13 @@ impl eframe::App for App {
                 }
             }
         }
-        if !ctx.wants_keyboard_input()
-            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::S))
-        {
-            self.execute(Command::Land, ctx);
-        }
         for command in self.menus.poll(ctx) {
             self.execute(command, ctx);
         }
         if !ctx.wants_keyboard_input() {
-            for (key, command) in [(Key::F, Command::Search), (Key::O, Command::Open)] {
-                if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, key)) {
-                    self.execute(command, ctx);
-                }
+            let chart = matches!(self.view, View::Sky | View::Horizon);
+            for command in shortcuts::commands(ctx, chart) {
+                self.execute(command, ctx);
             }
         }
         let canvas_layer = egui::CentralPanel::default()
