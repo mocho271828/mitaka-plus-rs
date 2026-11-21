@@ -335,7 +335,7 @@ impl Solar {
         Ok(())
     }
     fn tick_surface(&mut self, jd: f64) -> io::Result<bool> {
-        let Some(f) = &self.surface_flight else {
+        let Some(f) = &mut self.surface_flight else {
             return Ok(false);
         };
         let t = if f.duration == 0. {
@@ -343,6 +343,8 @@ impl Solar {
         } else {
             (f.started.elapsed().as_secs_f64() / f.duration).min(1.)
         };
+        f.progress = t;
+        let ascend = f.ascend;
         let site = f.at(t);
         site.pose(
             self.body_point(site.body).unwrap().into(),
@@ -351,12 +353,32 @@ impl Solar {
         )?;
         self.flight_site = Some(site);
         if t >= 1. {
-            if !f.ascend {
+            if !ascend {
                 self.landed = Some(site.body);
             }
             self.surface_flight = None;
         }
         Ok(true)
+    }
+    pub(crate) fn update_ground(
+        &mut self,
+        ground: &crate::surface::Surface,
+        jd: f64,
+    ) -> io::Result<()> {
+        if let Some(mut site) = self
+            .flight_site
+            .filter(|s| s.at_location(ground.body, ground.lat, ground.lon))
+        {
+            site.update_terrain(ground.landing_height_m(RADII_KM[ground.body]) / 1000.);
+            if let Some(f) = &mut self.surface_flight {
+                f.update_terrain(site);
+            }
+            if let Some(center) = self.body_point(site.body) {
+                site.pose(center.into(), jd, &mut self.camera)?;
+            }
+            self.flight_site = Some(site);
+        }
+        Ok(())
     }
     pub(crate) fn flight_duration(&mut self, seconds: f64) {
         if let Some(f) = &mut self.surface_flight {

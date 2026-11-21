@@ -5,6 +5,7 @@ use std::time::Instant;
 pub(super) struct SurfaceFlight {
     pub started: Instant,
     pub duration: f64,
+    pub progress: f64,
     pub ascend: bool,
     pub from: Site,
     pub to: Site,
@@ -23,9 +24,7 @@ impl SurfaceFlight {
                 ..ground
             })
         };
-        let delta_lon = (from.lon - ground.lon + 180.).rem_euclid(360.) - 180.;
-        let same = (from.lat - ground.lat).abs() <= 1e-8
-            && (ground.lat.abs() == 90. || delta_lon.abs() <= 1e-8);
+        let same = from.at_location(ground.body, ground.lat, ground.lon);
         if same {
             from.lat = ground.lat;
             from.lon = ground.lon;
@@ -50,10 +49,27 @@ impl SurfaceFlight {
         Self {
             started: Instant::now(),
             duration: 3.,
+            progress: 0.,
             ascend,
             from,
             to,
             horizon: earth && same,
+        }
+    }
+    pub fn update_terrain(&mut self, site: Site) {
+        self.to.update_terrain(site.terrain);
+        if self.horizon {
+            let remaining = 0.5 - 0.5 * ((1. - self.progress) * std::f64::consts::PI).cos();
+            if remaining > 0. {
+                self.from.height = self.to.height + (site.height - self.to.height) / remaining;
+            }
+            self.from.terrain = site.terrain;
+        } else {
+            // 対数高度の残区間を現在姿勢から開始し、元の到着時刻を保つ。
+            self.started += std::time::Duration::from_secs_f64(self.duration * self.progress);
+            self.duration *= 1. - self.progress;
+            self.progress = 0.;
+            self.from = site;
         }
     }
     pub fn at(&self, t: f64) -> Site {
@@ -172,5 +188,39 @@ mod tests {
         );
         let other = Site::ground(3, 35., -41., -700., camera);
         assert!(!SurfaceFlight::new(other, Some(flight.to), false).horizon);
+    }
+}
+#[cfg(test)]
+mod changed_surface {
+    use super::*;
+    #[test]
+    fn standing_follows_the_replacement_mesh_and_flying_preserves_datum_height() {
+        let mut ground = Site::ground(4, 28., 35., -700., Camera::default());
+        let mut high = Site {
+            height: 10.,
+            ..ground
+        };
+        ground.update_terrain(-14.);
+        high.update_terrain(-14.);
+        assert_eq!(ground.height, 0.002);
+        assert!((high.height + high.terrain - 9.3).abs() < 1e-12);
+        high.update_terrain(10.);
+        assert_eq!(high.height, 0.002);
+    }
+    #[test]
+    fn midflight_replacement_keeps_current_and_destination_datum_radii() {
+        for body in [3, 4] {
+            let start = Site::ground(body, 28., 35., -700., Camera::default());
+            let mut flight = SurfaceFlight::new(start, None, true);
+            flight.progress = 0.37;
+            let mut site = flight.at(flight.progress);
+            let h = site.height + site.terrain;
+            let end = flight.to.height + flight.to.terrain;
+            site.update_terrain(-14.);
+            flight.update_terrain(site);
+            let next = flight.at(flight.progress);
+            assert!((next.terrain + next.height - h).abs() < 1e-9);
+            assert!((flight.to.height + flight.to.terrain - end).abs() < 1e-9);
+        }
     }
 }
