@@ -1,5 +1,7 @@
 name: Distribution
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+  workflow_call:
 permissions:
   contents: read
 env:
@@ -18,6 +20,19 @@ jobs:
       - if: runner.os == 'macOS'
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - run: bash tools/package.sh
+      - name: Open synthetic catalogs from the packaged application
+        shell: bash
+        run: |
+          cargo run --locked -p mitaka-core --example synthetic_chart -- package-test-data
+          case "$RUNNER_OS" in
+            macOS) ditto -x -k dist/*universal.zip "$RUNNER_TEMP/pkg"
+                   app="$RUNNER_TEMP/pkg/Mitaka Plus.app/Contents/MacOS/mitaka-plus" ;;
+            Linux) dpkg-deb -x dist/*.deb "$RUNNER_TEMP/pkg"
+                   app="$RUNNER_TEMP/pkg/usr/bin/mitaka-plus" ;;
+            Windows) 7z x -o"$RUNNER_TEMP/pkg" dist/*x64.zip
+                     app="$RUNNER_TEMP/pkg/mitaka-plus/mitaka-plus.exe" ;;
+          esac
+          "$app" --inspect --data-root package-test-data
       - if: runner.os == 'Linux'
         run: bash tools/offline-source.sh
       - uses: actions/upload-artifact@v4
