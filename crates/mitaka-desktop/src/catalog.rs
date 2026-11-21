@@ -8,6 +8,7 @@ use std::{
 
 pub struct SkyData {
     pub root: PathBuf,
+    pub date_range: [f64; 2],
     pub stars: Vec<Star>,
     pub by_hip: HashMap<i32, usize>,
     pub constellations: Vec<Constellation>,
@@ -15,16 +16,10 @@ pub struct SkyData {
 }
 impl SkyData {
     pub fn validate_date(&self, jd: f64) -> io::Result<()> {
-        if !(mitaka_core::lunar::LUNAR_MINIMUM_JD..=mitaka_core::lunar::LUNAR_MAXIMUM_JD)
-            .contains(&jd)
-        {
-            return Err(io::Error::other("日時が月位置計算の有効範囲外です"));
-        }
-        for i in 0..9 {
-            let [lo, hi] = self.ephemeris.time_range(i)?;
-            if !(lo..=hi).contains(&jd) {
-                return Err(io::Error::other("日時がCF96暦表の有効範囲外です"));
-            }
+        if !(self.date_range[0]..=self.date_range[1]).contains(&jd) {
+            return Err(io::Error::other(
+                "日時が月位置計算またはCF96暦表の有効範囲外です",
+            ));
         }
         Ok(())
     }
@@ -49,7 +44,19 @@ impl SkyData {
         if ephemeris.planet_count() != 9 {
             return Err(io::Error::other("CF96は9天体を必要とします"));
         }
+        let mut date_range = [
+            mitaka_core::lunar::LUNAR_MINIMUM_JD,
+            mitaka_core::lunar::LUNAR_MAXIMUM_JD,
+        ];
+        for i in 0..ephemeris.planet_count() {
+            let [lo, hi] = ephemeris.time_range(i)?;
+            date_range = [lo.max(date_range[0]), hi.min(date_range[1])];
+        }
+        if date_range[0] >= date_range[1] {
+            return Err(io::Error::other("暦表と月位置計算の有効範囲が重なりません"));
+        }
         Ok(Self {
+            date_range,
             root: root.to_path_buf(),
             stars,
             by_hip,
