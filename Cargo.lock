@@ -2781,6 +2781,7 @@ name = "mitaka-desktop"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "block2 0.6.2",
  "cap-std",
  "chrono",
  "command-group",
@@ -2799,6 +2800,9 @@ dependencies = [
  "mp4",
  "muda",
  "nix",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
  "raw-window-handle",
  "rfd",
  "same-file",
