@@ -11,6 +11,7 @@ name = "mitaka-plus"
 path = "src/main.rs"
 
 [dependencies]
+dirs = "7"
 uuid = { version = "1", features = ["v4"] }
 wry = "0.57.3"
 tao = "0.37"

@@ -3,6 +3,7 @@ mod app;
 mod catalog;
 mod layers;
 mod satellite;
+pub(crate) mod selections;
 mod spacecraft;
 use crate::catalog::SkyData;
 use catalog::{error, Catalog};
@@ -69,6 +70,7 @@ impl Position {
 #[derive(Default)]
 pub(crate) struct Browser {
     pub open: bool,
+    pub(crate) selections: selections::Selections,
     kind: Kind,
     root: Option<PathBuf>,
     data: Option<Catalog>,
@@ -235,6 +237,15 @@ impl Browser {
                     if let Some(i) = self.active {
                         ui.separator();
                         ui.label(c.info(i, epoch[0]));
+                        if let Some((src, ord)) = c.identity(i) {
+                            let mut selected = self.selections.contains(self.kind, src, ord);
+                            if ui
+                                .checkbox(&mut selected, "表示する天体の集合に追加")
+                                .changed()
+                            {
+                                self.selections.toggle(self.kind, src, ord, selected);
+                            }
+                        }
                         ui.horizontal(|ui| {
                             apply |= ui.button("視点を移動").clicked();
                             if ui

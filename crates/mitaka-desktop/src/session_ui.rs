@@ -3,9 +3,7 @@ use crate::{
     session::Session,
     App,
 };
-use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use std::{io, path::Path};
 
 impl App {
@@ -31,6 +29,23 @@ impl App {
         }
     }
 
+    pub(super) fn remembered_session(&mut self, save: bool) -> io::Result<()> {
+        if self.data.is_none() {
+            return Err(io::Error::other("先に天文データを開いてください"));
+        }
+        let root = dirs::config_dir()
+            .ok_or_else(|| io::Error::other("アプリ設定の保存先を特定できません"))?
+            .join("mitaka-plus-rs");
+        let path = root.join("remembered-v9.json");
+        if save {
+            std::fs::create_dir_all(&root)?;
+            self.save_session(&path)
+        } else if !path.try_exists()? {
+            Err(io::Error::other("記憶した表示状態はありません"))
+        } else {
+            self.restore_session(&path)
+        }
+    }
     fn save_session(&self, path: &Path) -> io::Result<()> {
         let data = self
             .data
@@ -57,6 +72,7 @@ impl App {
         v["planets"]["orbits"] = json!(self.solar.orbits);
         v["solar_camera"] = json!({"target":self.solar.camera.target, "distance_au":self.solar.camera.distance, "yaw_deg":self.solar.camera.yaw,"pitch_deg":self.solar.camera.pitch, "roll_deg":self.solar.camera.roll,"fov_deg":45.0,"frame":null,"frame_is_orbit":false});
         v["selected_body"] = json!(self.solar.selected);
+        self.objects.selections.apply_to(v);
         let surface = &self.solar.surfaces;
         v["earth_layers"] = json!({"clouds":surface.clouds,"city_lights":surface.lights});
         v["eclipse"]["shadows"] = json!(surface.eclipse);
@@ -89,49 +105,7 @@ impl App {
                 "地表姿勢・傾きを含むセッションは、この版では復元できません",
             ));
         }
-        if v["small_bodies"]["selected_ids"]
-            .as_array()
-            .is_some_and(|a| !a.is_empty())
-        {
-            return Err(io::Error::other(
-                "小天体の選択集合を照合できないため復元を中止しました",
-            ));
-        }
-        let sat = &v["satellites"];
-        if sat["selected_ids"]
-            .as_array()
-            .is_some_and(|a| !a.is_empty())
-        {
-            use mitaka_core::satellite_catalog::{Dataset, Limits};
-            let catalog = Dataset::load(&data.root, Limits::default());
-            let source = |value: &Value| {
-                let bytes = STANDARD
-                    .decode(value["source_key_base64"].as_str().unwrap_or(""))
-                    .map_err(io::Error::other)?;
-                catalog
-                    .sources
-                    .iter()
-                    .find(|s| s.key.as_bytes() == bytes && s.read_complete)
-                    .ok_or_else(|| io::Error::other("衛星データの出典を確認できません"))
-            };
-            for item in sat["sources"].as_array().unwrap() {
-                let s = source(item)?;
-                if item["byte_count"].as_f64() != Some(s.raw.len() as f64)
-                    || item["sha256"] != format!("{:x}", Sha256::digest(&s.raw))
-                {
-                    return Err(io::Error::other("衛星の原本が保存時と異なります"));
-                }
-            }
-            for id in sat["selected_ids"].as_array().unwrap() {
-                if !source(id)?
-                    .records
-                    .iter()
-                    .any(|r| Some(r.ordinal as f64) == id["record_ordinal"].as_f64())
-                {
-                    return Err(io::Error::other("衛星の原ブロックを照合できません"));
-                }
-            }
-        }
+        let selections = crate::objects::selections::Selections::load(&data.root, v)?;
         let camera = &v["solar_camera"];
         let mut target: [f64; 3] = std::array::from_fn(|i| camera["target"][i].as_f64().unwrap());
         if let Some(p) = camera.get("precise_target") {
@@ -148,6 +122,9 @@ impl App {
             ));
         }
         // 検証と出典照合が全て成功してから、補間を停止して一括適用する。
+        self.objects = Default::default();
+        self.objects.selections = selections;
+        self.scripts.cancel();
         self.solar.stop();
         self.set_date(jd);
         self.solar.camera.target = target;
