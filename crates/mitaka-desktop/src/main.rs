@@ -1,0 +1,462 @@
+mod catalog;
+mod chart;
+mod commands;
+mod fonts;
+mod projection;
+
+use crate::{
+    catalog::SkyData,
+    chart::{Chart, Options},
+    commands::{Command, Menus},
+    projection::{Camera, View},
+};
+use chrono::{DateTime, NaiveDateTime, Utc};
+use eframe::egui::{self, Color32, Key};
+use mitaka_core::astronomy::ObservationFrame;
+use std::{env, error::Error, ffi::OsString, path::PathBuf};
+
+type AppError = Box<dyn Error + Send + Sync>;
+const J2000: f64 = 2451545.;
+const UNIX_EPOCH_JD: f64 = 2440587.5;
+fn utc_date(jd: f64) -> Option<DateTime<Utc>> {
+    DateTime::from_timestamp(((jd - UNIX_EPOCH_JD) * 86400.).round() as i64, 0)
+}
+fn parse_utc(text: &str) -> Option<f64> {
+    let date = NaiveDateTime::parse_from_str(text.trim(), "%Y-%m-%d %H:%M:%S").ok()?;
+    Some(UNIX_EPOCH_JD + date.and_utc().timestamp() as f64 / 86400.)
+}
+
+#[derive(Default)]
+struct Args {
+    data: Option<PathBuf>,
+    inspect: bool,
+    smoke: bool,
+    help: bool,
+}
+impl Args {
+    fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Self, String> {
+        let mut result = Self::default();
+        let mut iter = args.into_iter();
+        while let Some(arg) = iter.next() {
+            if arg == "--data-root" {
+                if result.data.is_some() {
+                    return Err("--data-root が重複しています".into());
+                }
+                let value = iter
+                    .next()
+                    .filter(|p| !p.is_empty() && !p.to_string_lossy().starts_with("--"))
+                    .ok_or("--data-root の後に data ディレクトリを指定してください")?;
+                result.data = Some(PathBuf::from(value));
+            } else if arg == "--inspect" {
+                result.inspect = true;
+            } else if arg == "--smoke-test" {
+                result.smoke = true;
+            } else if arg == "--help" || arg == "-h" {
+                result.help = true;
+            } else {
+                return Err(format!("不明な引数 {}", arg.to_string_lossy()));
+            }
+        }
+        if result.inspect && result.smoke {
+            return Err("--inspect と --smoke-test は個別に指定してください".into());
+        }
+        Ok(result)
+    }
+}
+struct App {
+    data: Option<SkyData>,
+    menus: Menus,
+    view: View,
+    sky: Camera,
+    horizon: Camera,
+    options: Options,
+    jd: f64,
+    latitude: f64,
+    longitude: f64,
+    selected: Option<i32>,
+    query: String,
+    search: bool,
+    settings: bool,
+    info: bool,
+    search_message: String,
+    error: Option<String>,
+    utc: String,
+    smoke_frames: Option<u8>,
+}
+impl App {
+    fn new(
+        cc: &eframe::CreationContext<'_>,
+        initial: Option<SkyData>,
+        error: Option<String>,
+        smoke: bool,
+    ) -> Result<Self, AppError> {
+        fonts::install(&cc.egui_ctx);
+        let menus = Menus::new(cc)?;
+        Ok(Self {
+            data: initial,
+            menus,
+            view: View::Sky,
+            sky: Camera::default(),
+            horizon: Camera::default(),
+            options: Options::default(),
+            jd: J2000,
+            latitude: 35.68,
+            longitude: 139.76,
+            selected: None,
+            query: String::new(),
+            search: false,
+            settings: false,
+            info: false,
+            search_message: String::new(),
+            error,
+            utc: "2000-01-01 12:00:00".into(),
+            smoke_frames: smoke.then_some(0),
+        })
+    }
+    fn camera(&mut self) -> &mut Camera {
+        if self.view == View::Sky {
+            &mut self.sky
+        } else {
+            &mut self.horizon
+        }
+    }
+    fn set_date(&mut self, jd: f64) {
+        if let Some(utc) = utc_date(jd) {
+            self.jd = jd;
+            self.utc = utc.format("%Y-%m-%d %H:%M:%S").to_string();
+        }
+    }
+    fn open(&mut self) {
+        if let Some(root) = rfd::FileDialog::new()
+            .set_title("hip.dat と cf96.dat のあるフォルダを開く")
+            .pick_folder()
+        {
+            match SkyData::open(&root) {
+                Ok(data) => {
+                    self.data = Some(data);
+                    self.selected = None;
+                    self.error = None;
+                    self.search_message.clear();
+                }
+                Err(err) => self.error = Some(format!("{}\n{err}", root.display())),
+            }
+        }
+    }
+    fn execute(&mut self, command: Command) {
+        match command {
+            Command::Open => self.open(),
+            Command::Sky => self.view = View::Sky,
+            Command::Horizon => self.view = View::Horizon,
+            Command::Settings => self.settings = true,
+            Command::Search => self.search = true,
+            Command::Info => self.info = true,
+            Command::Reset => *self.camera() = Camera::default(),
+        }
+    }
+    fn search_star(&mut self) {
+        self.search_message.clear();
+        let trimmed = self.query.trim();
+        let number = trimmed
+            .get(..3)
+            .filter(|p| p.eq_ignore_ascii_case("HIP"))
+            .map_or(trimmed, |_| trimmed[3..].trim());
+        let Some(hip) = number.parse::<i32>().ok().filter(|id| *id > 0) else {
+            self.search_message = "HIP 番号を入力してください".into();
+            return;
+        };
+        let Some(data) = &self.data else {
+            self.search_message = "データを開いてください".into();
+            return;
+        };
+        let Some(&index) = data.by_hip.get(&hip) else {
+            self.search_message = format!("HIP {hip} は見つかりません");
+            return;
+        };
+        let star = &data.stars[index];
+        let mut coords = [f64::from(star.ra_deg), f64::from(star.dec_deg)];
+        if self.view == View::Horizon {
+            match ObservationFrame::new(self.latitude, self.longitude, self.jd)
+                .and_then(|frame| frame.to_horizontal(coords[0], coords[1]))
+            {
+                Ok(horizontal) => coords = horizontal,
+                Err(err) => {
+                    self.search_message = err.to_string();
+                    return;
+                }
+            }
+        }
+        self.options.magnitude = self.options.magnitude.max(star.magnitude);
+        self.selected = Some(hip);
+        let view = self.view;
+        self.camera().center(view, coords);
+        self.search_message = format!("HIP {hip} を選択しました");
+    }
+    fn panels(&mut self, ctx: &egui::Context) {
+        let mut search = self.search;
+        egui::Window::new("恒星を検索")
+            .open(&mut search)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("HIP 番号");
+                    let edit = ui.text_edit_singleline(&mut self.query);
+                    if edit.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter))
+                        || ui.button("検索").clicked()
+                    {
+                        self.search_star();
+                    }
+                });
+                if !self.search_message.is_empty() {
+                    ui.label(&self.search_message);
+                }
+            });
+        self.search = search;
+        let mut settings = self.settings;
+        egui::Window::new("観測・表示設定")
+            .open(&mut settings)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("UTC");
+                    ui.text_edit_singleline(&mut self.utc);
+                    if ui.button("適用").clicked() {
+                        if let Some(jd) = parse_utc(&self.utc) {
+                            self.set_date(jd);
+                        } else {
+                            self.error =
+                                Some("UTC は YYYY-MM-DD HH:MM:SS で指定してください".into());
+                        }
+                    }
+                });
+                ui.horizontal(|ui| {
+                    if ui.button("前日").clicked() {
+                        self.set_date(self.jd - 1.);
+                    }
+                    if ui.button("翌日").clicked() {
+                        self.set_date(self.jd + 1.);
+                    }
+                    if ui.button("現在").clicked() {
+                        self.set_date(UNIX_EPOCH_JD + Utc::now().timestamp() as f64 / 86400.);
+                    }
+                    if ui.button("J2000").clicked() {
+                        self.set_date(J2000);
+                    }
+                    ui.label(format!("JD {:.6}", self.jd));
+                });
+                ui.separator();
+                ui.add(egui::Slider::new(&mut self.latitude, -90. ..=90.).text("緯度 °"));
+                ui.add(egui::Slider::new(&mut self.longitude, -180. ..=180.).text("東経 °"));
+                ui.add(
+                    egui::Slider::new(&mut self.options.magnitude, -1.5..=16.).text("V 等級上限"),
+                );
+                ui.checkbox(&mut self.options.lines, "星座線");
+                ui.checkbox(&mut self.options.labels, "星座略号");
+                if let Some(data) = &self.data {
+                    ui.label(format!(
+                        "{}\n恒星 {} 件・星座 {} 件",
+                        data.root.display(),
+                        data.stars.len(),
+                        data.constellations.len()
+                    ));
+                }
+            });
+        self.settings = settings;
+        egui::Window::new("選択天体の情報")
+            .open(&mut self.info)
+            .show(ctx, |ui| {
+                if let Some((data, hip)) = self.data.as_ref().zip(self.selected) {
+                    if let Some(&index) = data.by_hip.get(&hip) {
+                        let star = &data.stars[index];
+                        ui.label(format!(
+                            "HIP {hip}\n赤経 {:.5}°　赤緯 {:+.5}°\nV 等級 {:.2}　B−V {:.2}",
+                            star.ra_deg, star.dec_deg, star.magnitude, star.bv
+                        ));
+                    }
+                } else {
+                    ui.label("恒星をクリックするか、HIP 番号で検索してください。");
+                }
+            });
+        if let Some(err) = self.error.clone() {
+            let mut open = true;
+            egui::Window::new("エラー").open(&mut open).show(ctx, |ui| {
+                ui.label(&err);
+                if ui.button("閉じる").clicked() {
+                    self.error = None;
+                }
+            });
+            if !open {
+                self.error = None;
+            }
+        }
+    }
+    fn canvas(&mut self, ui: &mut egui::Ui) {
+        if self.data.is_none() {
+            ui.centered_and_justified(|ui| {
+                if ui.button("天文データを開く…").clicked() {
+                    self.open();
+                }
+            });
+            return;
+        }
+        let (response, painter) =
+            ui.allocate_painter(ui.available_size(), egui::Sense::click_and_drag());
+        let rect = response.rect;
+        if rect.width() < 1. || rect.height() < 1. {
+            return;
+        }
+        let view = self.view;
+        let camera = self.camera();
+        if response.dragged() {
+            let delta = response.drag_delta();
+            camera.pan(
+                view,
+                f64::from(delta.x / rect.width()),
+                f64::from(delta.y / rect.height()),
+            );
+        }
+        if let Some(mouse) = response.hover_pos() {
+            let factor = ui
+                .input(|i| (i.smooth_scroll_delta.y * 0.008).clamp(-2., 2.).exp() * i.zoom_delta());
+            if (factor - 1.).abs() > 1e-6 {
+                camera.zoom_at(
+                    view,
+                    factor.into(),
+                    [
+                        f64::from((mouse.x - rect.left()) / rect.width()),
+                        f64::from((mouse.y - rect.top()) / rect.height()),
+                    ],
+                );
+            }
+        }
+        let camera = *camera;
+        let Ok(frame) = ObservationFrame::new(self.latitude, self.longitude, self.jd) else {
+            return;
+        };
+        let chart = Chart {
+            view,
+            camera,
+            frame: &frame,
+            rect,
+        };
+        let click = response
+            .clicked()
+            .then(|| response.interact_pointer_pos())
+            .flatten();
+        let Some(data) = self.data.as_ref() else {
+            return;
+        };
+        let pick = chart.paint(&painter, data, &self.options, self.selected, click);
+        if click.is_some() {
+            self.selected = pick;
+            ui.ctx().request_repaint();
+        }
+    }
+}
+impl eframe::App for App {
+    fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+        for command in self.menus.poll(ctx) {
+            self.execute(command);
+        }
+        if !ctx.wants_keyboard_input() {
+            for (key, command) in [(Key::F, Command::Search), (Key::O, Command::Open)] {
+                if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, key)) {
+                    self.execute(command);
+                }
+            }
+        }
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE.fill(Color32::from_rgb(6, 11, 18)))
+            .show(ctx, |ui| self.canvas(ui));
+        self.panels(ctx);
+        if let Some(frame) = self.smoke_frames.as_mut() {
+            *frame += 1;
+            if *frame == 1 {
+                self.view = View::Horizon;
+            }
+            if *frame >= 3 {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            } else {
+                ctx.request_repaint();
+            }
+        }
+    }
+}
+fn run() -> Result<(), AppError> {
+    let args = Args::parse(env::args_os().skip(1))?;
+    if args.help {
+        println!("mitaka-plus [--data-root DIR] [--inspect | --smoke-test]");
+        return Ok(());
+    }
+    let root = args
+        .data
+        .or_else(|| env::var_os("DATA_ROOT").map(PathBuf::from))
+        .or_else(|| {
+            let path = PathBuf::from("resources/data");
+            path.join("hip.dat").is_file().then_some(path)
+        });
+    let (data, error) = match root {
+        Some(path) => match SkyData::open(&path) {
+            Ok(data) => (Some(data), None),
+            Err(error) => (None, Some(format!("{}: {error}", path.display()))),
+        },
+        None => (None, None),
+    };
+    if args.inspect || args.smoke {
+        let data = data.as_ref().ok_or_else(|| {
+            error
+                .clone()
+                .unwrap_or_else(|| "--data-root にデータの場所を指定してください".into())
+        })?;
+        let state = data.ephemeris.state(0, J2000)?;
+        println!(
+            "stars={} constellations={} mercury_j2000_au={:?}",
+            data.stars.len(),
+            data.constellations.len(),
+            state.position_au
+        );
+        if args.inspect {
+            return Ok(());
+        }
+    }
+    let options = eframe::NativeOptions {
+        renderer: eframe::Renderer::Wgpu,
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([1080., 700.])
+            .with_min_inner_size([400., 300.]),
+        ..Default::default()
+    };
+    eframe::run_native(
+        "Mitaka Plus",
+        options,
+        Box::new(move |cc| Ok(Box::new(App::new(cc, data, error, args.smoke)?))),
+    )
+    .map_err(|e| e.to_string().into())
+}
+fn main() {
+    if let Err(error) = run() {
+        eprintln!("{error}");
+        std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn julian_epoch_and_utc_date() {
+        assert_eq!(parse_utc("2000-01-01 12:00:00"), Some(J2000));
+        assert_eq!(
+            utc_date(UNIX_EPOCH_JD).unwrap().to_rfc3339(),
+            "1970-01-01T00:00:00+00:00"
+        );
+        assert_eq!(parse_utc("2001-02-29 12:00:00"), None);
+    }
+    #[test]
+    fn reject_missing_path_or_conflicting_modes() {
+        for args in [
+            vec!["--data-root"],
+            vec!["--data-root", "--inspect"],
+            vec!["--inspect", "--smoke-test"],
+        ] {
+            assert!(Args::parse(args.into_iter().map(OsString::from)).is_err());
+        }
+    }
+}

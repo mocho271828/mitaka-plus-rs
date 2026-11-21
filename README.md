@@ -10,3 +10,11 @@ cargo test --workspace --locked
 ```
 
 [レビュー順序](docs/STACK.md)・[実装方針](IMPLEMENTATION_POLICY.md)・[第三者の許諾表示](licenses/Mitaka.txt)
+
+## 星図を起動する
+
+```sh
+cargo run --locked -p mitaka-desktop -- --data-root "/absolute/path/to/resources/data"
+```
+
+引数を省略した場合は「ファイル」メニューでデータを選びます。「表示」で全天図・地平図を切り替え、ドラッグで移動、スクロールで拡大、クリックで恒星を選択できます。「観測・表示設定」で日時と観測地点を変更します。読み込み結果だけを確かめるには `--inspect --data-root DIRECTORY` を使います。
