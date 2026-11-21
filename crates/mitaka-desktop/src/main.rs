@@ -122,13 +122,17 @@ impl App {
     ) -> Result<Self, AppError> {
         fonts::install(&cc.egui_ctx);
         let menus = Menus::new(cc)?;
+        let mut media = media_preview::Media::default();
+        if let Some(data) = &initial {
+            media.reset(&data.root);
+        }
         Ok(Self {
             terrain_amplification: Default::default(),
             data: initial,
             motion: Default::default(),
             landscape_render: Default::default(),
             projector: Default::default(),
-            media: Default::default(),
+            media,
             scripts: Default::default(),
             playback: Default::default(),
             session: Default::default(),
@@ -194,6 +198,7 @@ impl App {
                     self.options.layers.observer.clear();
                     self.options.layers.selected = None;
                     self.options.layers.exceptions.clear();
+                    self.media.reset(&data.root);
                     self.data = Some(data);
                     self.motion = Default::default();
                     self.objects = Default::default();
@@ -215,6 +220,7 @@ impl App {
         match command {
             Command::Open => self.open(),
             Command::Media => self.media.choose(ctx),
+            Command::MediaList => self.media.browser = true,
             Command::Projector => {
                 self.projector.controls = true;
                 self.projector.open = true;

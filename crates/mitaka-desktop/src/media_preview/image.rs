@@ -2,7 +2,7 @@ use eframe::egui;
 use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, Limits};
 use std::{
     fs::OpenOptions,
-    io::{self, Cursor, Read},
+    io::{self, Cursor},
     path::Path,
 };
 
@@ -21,15 +21,30 @@ fn load_rgba(path: &Path, landscape: bool) -> io::Result<image::RgbaImage> {
         opts.custom_flags(libc::O_NONBLOCK);
     }
     let file = opts.open(path)?;
+    decode(path, file, landscape)
+}
+fn decode(path: &Path, file: std::fs::File, landscape: bool) -> io::Result<image::RgbaImage> {
     let meta = file.metadata()?;
     if !meta.is_file() || meta.len() == 0 || meta.len() > MAX_BYTES {
         return Err(invalid(
             "画像は 64 MiB 以下の通常ファイルを選択してください",
         ));
     }
-    let mut bytes = Vec::with_capacity(meta.len() as usize);
-    file.take(MAX_BYTES + 1).read_to_end(&mut bytes)?;
-    if bytes.len() as u64 != meta.len() {
+    let mut bytes = vec![0; meta.len() as usize];
+    let mut offset = 0;
+    while offset < bytes.len() {
+        #[cfg(unix)]
+        let count =
+            std::os::unix::fs::FileExt::read_at(&file, &mut bytes[offset..], offset as u64)?;
+        #[cfg(windows)]
+        let count =
+            std::os::windows::fs::FileExt::seek_read(&file, &mut bytes[offset..], offset as u64)?;
+        if count == 0 {
+            return Err(invalid("画像の読込中にサイズが変わりました"));
+        }
+        offset += count;
+    }
+    if file.metadata()?.len() != meta.len() {
         return Err(invalid("画像の読込中にサイズが変わりました"));
     }
     let mut reader = ImageReader::new(Cursor::new(&bytes)).with_guessed_format()?;
@@ -73,8 +88,12 @@ pub(crate) fn load_landscape(path: &Path) -> io::Result<image::RgbaImage> {
     load_rgba(path, true)
 }
 
+#[cfg(test)]
 pub fn load(path: &Path) -> io::Result<egui::ColorImage> {
-    let image = load_rgba(path, false)?;
+    load_selected(path, std::fs::File::open(path)?)
+}
+pub fn load_selected(path: &Path, file: std::fs::File) -> io::Result<egui::ColorImage> {
+    let image = decode(path, file, false)?;
     Ok(egui::ColorImage::from_rgba_unmultiplied(
         [image.width() as usize, image.height() as usize],
         &image,

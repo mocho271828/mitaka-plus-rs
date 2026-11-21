@@ -1,5 +1,6 @@
 mod bindings;
 mod host;
+mod media;
 
 use mitaka_script as _;
 use mlua::chunk::ChunkMode;

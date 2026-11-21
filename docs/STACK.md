@@ -40,11 +40,13 @@
 | 32 | camera-controls | ui・カメラの操作とLua | 手動操作と時刻補間、投影と復元を検証 | 900 | implemented |
 | 33 | terrain-display | ui・地形タイルと倍率 | 元標高と地形倍率を旧版で照合 | 650 | implemented |
 | 34 | script-calendar | adapter・旧LuaのUTC・地方時と日時補間 | 日時の繰越、時差・実Luaの往復、補間終端 | 450 | implemented |
-| 35 | registered-media | adapter・登録メディアと制御 | 旧登録名と順序、ローカルメディアを比較 | 900 | not-started |
+| 35 | registered-media | adapter・登録メディアと制御 | 旧登録名と順序、ローカルメディアを比較 | 900 | implemented |
 | 36 | milky-way | ui・全天・地平図の銀河背景 | 元の写真・銀河座標と遮蔽、表示設定を検証 | 450 | not-started |
 | 37 | camera-targets | ui・名前で指定した銀河・球状星団・星座の追従 | 登録名と物理位置の対照、同名の拒否 | 400 | not-started |
 | 38 | viewer-controls | ui・ポインター選択、距離目盛と表示設定 | Lua・手動変更とセッションの整合 | 500 | not-started |
 | 39 | sky-deep-catalogs | ui・全天図のNGC・SDSSと地平姿勢 | 全銀河の密度積算と投影座標の対照 | 600 | not-started |
-| 40 | parity | contract・旧版機能と三OS配布の検証 | 機能別の対応実績、配布物と起動経路を検証 | 機能ごとに分割 | not-started |
+| 40 | eclipse-layers | ui・食の境界、本影と半影の円錐 | 旧版の遮蔽物と接線位置の照合 | 550 | not-started |
+| 41 | display-script | adapter・恒星名、星座指定と惑星の表示倍率 | 実Luaとv9の相互運用、異常入力 | 550 | not-started |
+| 42 | parity | contract・旧版機能と三OS配布の検証 | 機能別の対応実績、配布物と起動経路を検証 | 機能ごとに分割 | not-started |
 
 差分が複数のレビュー理由を持つ場合はその単位を分割する。親が変わる場合は先に表を修正し、レビュー指摘は責務を持つ親で直す。CI結果・実機結果・未実装項目を区別する。下位PRから順にレビューし、全機能の実装と検証が揃った時点でマージ作業へ引き継ぐ。

@@ -3,6 +3,7 @@ use eframe::egui;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
     Media,
+    MediaList,
     Projector,
     Fullscreen,
     About,
@@ -31,6 +32,7 @@ pub enum Command {
 }
 
 const FILE: &[(Command, &str)] = &[
+    (Command::MediaList, "ローカル媒体の登録…"),
     (Command::Media, "画像・音声・動画を開く…"),
     (Command::Open, "データを開く…"),
     (Command::RememberState, "現在の表示状態を記憶"),

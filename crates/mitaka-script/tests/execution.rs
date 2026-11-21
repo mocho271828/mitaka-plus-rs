@@ -118,6 +118,11 @@ assert(Camera.zoom == UNIT_AU)
 assert(not pcall(function() Time.JD = "1" end))
 Time.JD = 2451546
 Stars:toggleLabels()
+assert(Images.name=="One")
+Images.index=1
+Movies:pause()
+GUI.soundControler=true
+assert(not pcall(function() Images.playing=true end))
 print(Camera.target)
 Time:stop()
 Camera:setZoomLogTo(4*UNIT_AU)
@@ -172,6 +177,23 @@ assert(not pcall(function() Camera:setAzimuthTo(0,1,"bad") end))
             "done" => {
                 assert_eq!(msg["ok"], true, "{msg}");
                 break;
+            }
+            "media" => {
+                match (
+                    msg["family"].as_str(),
+                    msg["command"].as_str(),
+                    msg["key"].as_str(),
+                ) {
+                    (Some("Images"), Some("get"), Some("name")) => json!({"ok":true,"value":"One"}),
+                    (Some("Images"), Some("set"), Some("index")) if msg["value"] == 1 => {
+                        json!({"ok":true})
+                    }
+                    (Some("Movies"), Some("call"), Some("pause")) => json!({"ok":true}),
+                    (Some("GUI"), Some("set"), Some("soundControler")) if msg["value"] == true => {
+                        json!({"ok":true})
+                    }
+                    _ => panic!("unexpected media operation"),
+                }
             }
             other => panic!("unexpected host request {other}"),
         };

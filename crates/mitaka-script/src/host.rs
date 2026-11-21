@@ -49,7 +49,7 @@ fn read_frame(stream: &mut impl Read) -> io::Result<Value> {
     Ok(serde_json::from_slice(&bytes)?)
 }
 
-fn request(host: &SharedHost, msg: Value) -> mlua::Result<Value> {
+pub(crate) fn request(host: &SharedHost, msg: Value) -> mlua::Result<Value> {
     let mut stream = host.borrow_mut();
     write_frame(&mut *stream, &msg).map_err(Error::external)?;
     let reply = read_frame(&mut *stream).map_err(Error::external)?;
@@ -207,6 +207,11 @@ impl UserData for HostObject {
             {
                 return Ok(LuaValue::Function(f));
             }
+            if obj.name == "GUI"
+                && let Some(v) = crate::media::gui_get(lua, &obj.connection, &key)?
+            {
+                return Ok(v);
+            }
             for f in FIELDS.iter().filter(|f| f.object == obj.name) {
                 if f.name == key {
                     return obj.get_field(lua, f);
@@ -232,6 +237,9 @@ impl UserData for HostObject {
                 if obj.name == "Time" && calendar::set_component(obj, &key, &value)? {
                     return Ok(());
                 }
+                if obj.name == "GUI" && key == "soundControler" {
+                    return crate::media::gui_set(&obj.connection, value);
+                }
                 let f = FIELDS
                     .iter()
                     .find(|f| f.object == obj.name && f.name == key)
@@ -249,6 +257,7 @@ pub fn install(lua: &Lua, host: Option<&SharedHost>) -> mlua::Result<()> {
     let Some(host) = host else {
         return Ok(());
     };
+    crate::media::install(lua, host)?;
     let names: std::collections::BTreeSet<_> = FIELDS.iter().map(|f| f.object).collect();
     for name in names {
         lua.globals().set(

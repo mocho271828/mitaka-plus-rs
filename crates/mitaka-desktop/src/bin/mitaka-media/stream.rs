@@ -14,7 +14,7 @@ use std::{
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 use uuid::Uuid;
 
-const CSP:&str="default-src 'none'; media-src 'self'; style-src 'unsafe-inline'; script-src 'none'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+const CSP:&str="default-src 'none'; media-src 'self'; style-src 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 fn header(name: &str, value: impl AsRef<[u8]>) -> Header {
     Header::from_bytes(name.as_bytes(), value.as_ref()).expect("controlled response header")
 }
@@ -74,6 +74,8 @@ impl Read for Segment {
     }
 }
 struct Source {
+    control: crate::control::Control,
+    native_route: String,
     file: Arc<File>,
     size: u64,
     mime: &'static str,
@@ -81,7 +83,7 @@ struct Source {
     host: String,
 }
 impl Source {
-    fn serve(&self, req: Request) -> io::Result<()> {
+    fn serve(&self, mut req: Request) -> io::Result<()> {
         let status = |n| Response::empty(StatusCode(n));
         if req
             .headers()
@@ -91,8 +93,72 @@ impl Source {
         {
             return req.respond(status(404));
         }
+        if req.url() == self.native_route && req.method() == &Method::Post {
+            // native_route は親子間の stdout のみで通知し、ブラウザには公開しない。
+            let mut data = String::new();
+            req.as_reader().take(257).read_to_string(&mut data)?;
+            let reply = if data.len() <= 256 {
+                serde_json::from_str(&data).ok().map(|v| {
+                    self.control
+                        .native(&v)
+                        .unwrap_or_else(|e| serde_json::json!({"ok":false,"error":e}))
+                })
+            } else {
+                None
+            };
+            return match reply {
+                Some(v) => req.respond(
+                    Response::from_string(v.to_string())
+                        .with_header(header("Content-Type", "application/json"))
+                        .with_header(header("Cache-Control", "no-store")),
+                ),
+                None => req.respond(status(400)),
+            };
+        }
+        if req.url() == format!("{}/sync", self.route) && req.method() == &Method::Post {
+            let origin = format!("http://{}", self.host);
+            if !req
+                .headers()
+                .iter()
+                .any(|h| h.field.equiv("Origin") && h.value.as_str() == origin)
+            {
+                return req.respond(status(403));
+            }
+            let mut state = String::new();
+            req.as_reader().take(161).read_to_string(&mut state)?;
+            if state.len() > 160 {
+                return req.respond(status(400));
+            }
+            return match self.control.sync(&state) {
+                Ok(cmd) => req.respond(
+                    Response::from_string(cmd).with_header(header("Cache-Control", "no-store")),
+                ),
+                Err(_) => req.respond(status(400)),
+            };
+        }
         if !matches!(req.method(), Method::Get | Method::Head) {
             return req.respond(status(405));
+        }
+        let assets: [(&str, &str, &[u8]); 2] = [
+            (
+                "controls.js",
+                "text/javascript",
+                include_bytes!("web/controls.js"),
+            ),
+            (
+                "controls_bg.wasm",
+                "application/wasm",
+                include_bytes!("web/controls_bg.wasm"),
+            ),
+        ];
+        for (name, mime, bytes) in assets {
+            if req.url() == format!("{}/{name}", self.route) {
+                return req.respond(
+                    Response::from_data(bytes)
+                        .with_header(header("Content-Type", mime))
+                        .with_header(header("X-Content-Type-Options", "nosniff")),
+                );
+            }
         }
         if req.url() == format!("{}/", self.route) {
             let tag = if self.mime.starts_with("video/") {
@@ -100,7 +166,7 @@ impl Source {
             } else {
                 "audio"
             };
-            let body=format!("<!doctype html><html lang='ja'><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>メディア</title><style>html,body{{margin:0;height:100%;background:#141619;color:#fff}}body{{display:grid;place-items:center}}video{{width:100%;height:100%}}audio{{width:min(90%,42rem)}}</style><{tag} controls preload='metadata' src='media'></{tag}></html>");
+            let body=format!("<!doctype html><html lang='ja'><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>メディア</title><style>html,body{{margin:0;height:100%;background:#141619;color:#fff}}body{{display:grid;place-items:center}}video{{width:100%;height:100%}}audio{{width:min(90%,42rem)}}</style><script type='module' src='controls.js'></script><{tag} controls id='player' preload='metadata' src='media'></{tag}></html>");
             return req.respond(
                 Response::from_string(body)
                     .with_header(header("Content-Type", "text/html; charset=utf-8"))
@@ -160,6 +226,7 @@ impl Source {
 }
 pub struct Player {
     pub url: String,
+    pub native: String,
     stopped: Arc<AtomicBool>,
 }
 impl Player {
@@ -175,6 +242,15 @@ impl Player {
             opts.custom_flags(libc::O_NONBLOCK);
         }
         let file = opts.open(path)?;
+        Self::from_file(file, mime)
+    }
+    pub fn from_handle(file: File, title: &Path) -> io::Result<Self> {
+        Self::from_file(
+            file,
+            mime(title).ok_or_else(|| io::Error::other("unsupported media extension"))?,
+        )
+    }
+    fn from_file(file: File, mime: &'static str) -> io::Result<Self> {
         let meta = file.metadata()?;
         if !meta.is_file() || meta.len() == 0 {
             return Err(io::Error::new(
@@ -187,7 +263,12 @@ impl Player {
         let route = format!("/{}", Uuid::new_v4().simple());
         let url = format!("http://{host}{route}/");
         let server = Arc::new(Server::from_listener(listener, None).map_err(io::Error::other)?);
+        let native_route = format!("/{}", Uuid::new_v4().simple());
+        let native = format!("{host}{native_route}");
+        let frames = crate::frames::Frames::read(&file, mime);
         let source = Arc::new(Source {
+            native_route,
+            control: crate::control::Control::new(frames),
             file: Arc::new(file),
             size: meta.len(),
             mime,
@@ -222,7 +303,11 @@ impl Player {
                 }
             });
         }
-        Ok(Player { url, stopped })
+        Ok(Player {
+            url,
+            native,
+            stopped,
+        })
     }
 }
 impl Drop for Player {
