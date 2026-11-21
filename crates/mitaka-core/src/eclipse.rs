@@ -22,6 +22,7 @@ THE SOFTWARE.
 */
 //! Eclipse geometry in a single Cartesian frame (usually J2000 ecliptic AU),
 //! from Mitaka 1.3.1 and Mitaka_plus f9fe624 eclipse.cpp.
+pub mod display;
 use crate::astronomy::Vector3;
 use std::{f64::consts::PI, io};
 #[derive(Clone, Copy, Debug)]
