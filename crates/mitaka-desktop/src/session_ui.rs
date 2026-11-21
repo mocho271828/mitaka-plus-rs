@@ -57,6 +57,12 @@ impl App {
         v["planets"]["orbits"] = json!(self.solar.orbits);
         v["solar_camera"] = json!({"target":self.solar.camera.target, "distance_au":self.solar.camera.distance, "yaw_deg":self.solar.camera.yaw,"pitch_deg":self.solar.camera.pitch, "roll_deg":self.solar.camera.roll,"fov_deg":45.0,"frame":null,"frame_is_orbit":false});
         v["selected_body"] = json!(self.solar.selected);
+        let p = &self.playback;
+        v["plus_time"] = json!({"speed":p.plus_speed,"step":p.plus_step,"value_days":p.plus_value});
+        v["simulation_rate"] = json!(p.rate);
+        v["show_time_info"] = json!(p.show);
+        v["time_settings"] =
+            json!({"step":p.gui_step,"custom_seconds":p.seconds,"utc_offset_minutes":p.offset});
         state.write(&path)
     }
     fn restore_session(&mut self, path: &Path) -> io::Result<()> {
@@ -170,6 +176,15 @@ impl App {
         self.selected = None;
         self.surface = None;
         self.galaxies = None;
+        self.playback = Default::default();
+        let p = &mut self.playback;
+        p.plus_step = num(&v["plus_time"], "step") as usize;
+        p.plus_value = num(&v["plus_time"], "value_days");
+        p.rate = num(v, "simulation_rate");
+        p.show = v["show_time_info"].as_bool().unwrap();
+        p.gui_step = num(&v["time_settings"], "step") as usize;
+        p.seconds = num(&v["time_settings"], "custom_seconds") as u32;
+        p.offset = num(&v["time_settings"], "utc_offset_minutes") as i32;
         self.session = state;
         Ok(())
     }
