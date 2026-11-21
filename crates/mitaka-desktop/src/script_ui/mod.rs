@@ -125,11 +125,14 @@ impl App {
     fn script_message(&mut self, msg: &Value, ctx: &egui::Context) -> Result<Value, String> {
         match msg["op"].as_str() {
             Some("constellations") => {
-                let data=self.data.as_ref().ok_or("天文データがありません")?;
-                self.options.layers.constellation_request(&data.constellations,msg)
+                let data = self.data.as_ref().ok_or("天文データがありません")?;
+                self.options
+                    .layers
+                    .constellation_request(&data.constellations, msg)
             }
             Some("media") => self.media.script(msg, ctx),
-            Some("snapshot") => Ok(self.camera_snapshot(self.options.layers.snapshot(json!({
+            Some("snapshot") => {
+                let mut reply = self.camera_snapshot(self.options.layers.snapshot(json!({
                 "ok":true,
                 "jd":self.jd,
                 "targetSelectionMode":self.picking as u8,
@@ -162,7 +165,10 @@ impl App {
                 "placeSetting":self.settings,
                 "scriptOutput":self.scripts.panel,
                 "dualScreen":self.projector.open,
-            })))),
+            })));
+                self.objects.display.snapshot(&mut reply);
+                Ok(reply)
+            }
             Some("time_animation") => {
                 self.animate_time(msg)?;
                 ctx.request_repaint();
@@ -172,15 +178,32 @@ impl App {
                 match msg["kind"].as_u64() {
                     Some(64) => {
                         self.data.as_ref().ok_or("天文データがありません")?;
-                        self.options.layers.animate_brightness(msg["number"].as_f64().ok_or("明るさが必要です")?,msg["duration"].as_f64().ok_or("秒数が必要です")?, std::time::Instant::now())?;
+                        self.options.layers.animate_brightness(
+                            msg["number"].as_f64().ok_or("明るさが必要です")?,
+                            msg["duration"].as_f64().ok_or("秒数が必要です")?,
+                            std::time::Instant::now(),
+                        )?;
                         ctx.request_repaint();
                     }
-                    Some(kind @ (67|68)) => {
-                        let data=self.data.as_ref().ok_or("天文データがありません")?;
-                        let hips=if kind==67 {Some(msg["hips"].as_array().ok_or("HIP一覧が必要です")?.as_slice())} else {None};
-                        self.options.layers.select_stars(&data.layers,hips,msg["enabled"].as_bool().ok_or("真偽値が必要です")?)?;
+                    Some(kind @ (67 | 68)) => {
+                        let data = self.data.as_ref().ok_or("天文データがありません")?;
+                        let hips = if kind == 67 {
+                            Some(
+                                msg["hips"]
+                                    .as_array()
+                                    .ok_or("HIP一覧が必要です")?
+                                    .as_slice(),
+                            )
+                        } else {
+                            None
+                        };
+                        self.options.layers.select_stars(
+                            &data.layers,
+                            hips,
+                            msg["enabled"].as_bool().ok_or("真偽値が必要です")?,
+                        )?;
                     }
-                    Some(kind @ (87|88)) => self.solar.layers.scale_action(kind,msg)?,
+                    Some(kind @ (87 | 88)) => self.solar.layers.scale_action(kind, msg)?,
                     Some(kind @ (3 | 4 | 12 | 89..=105)) => self.camera_action(kind, msg, ctx)?,
                     Some(kind @ (0 | 2 | 19 | 20 | 72..=78)) => self.time_action(kind, msg)?,
                     Some(kind @ (27..=30 | 69 | 70 | 79..=82)) => {
@@ -208,6 +231,10 @@ impl App {
                             _ => ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(enabled)),
                         }
                     }
+                    Some(kind @ 44..=59) => self
+                        .objects
+                        .display
+                        .apply(kind, msg["enabled"].as_bool().ok_or("真偽値が必要です")?),
                     Some(106) => {
                         self.picking = msg["number"]
                             .as_f64()
@@ -489,6 +516,11 @@ impl App {
         self.view = crate::projection::View::Solar;
         let dir = run::scratch()?;
         let check = r#"
+Asteroids.selectedOnly=true
+Satellites.orbits=true
+assert(Asteroids.selectedOnly and Satellites.orbits)
+Satellites.orbits=false
+Asteroids.selectedOnly=false
 Targets.selectMode = 1
 assert(Targets.selectMode == 1)
 Targets.selectMode = 2

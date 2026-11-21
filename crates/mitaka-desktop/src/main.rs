@@ -565,6 +565,7 @@ impl App {
                     self.options.layers.observer.clear();
                 }
                 self.picking.ui(ui);
+                self.objects.display.ui(ui);
                 self.options.layers.ui(
                     ui,
                     self.data.as_ref(),
