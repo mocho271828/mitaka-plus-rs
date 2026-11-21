@@ -95,6 +95,20 @@ impl Smoke {
                 app.view = View::Solar;
             }
             Scene::GlobeEarth | Scene::GlobeMars => {
+                let texture = if scene == Scene::GlobeEarth {
+                    "earth.jpg"
+                } else {
+                    "mars.jpg"
+                };
+                if !data
+                    .root
+                    .with_file_name("textures")
+                    .join(texture)
+                    .try_exists()?
+                {
+                    eprintln!("SKIP {} ({texture} がありません)", scene.name());
+                    return Ok(false);
+                }
                 let body = if scene == Scene::GlobeEarth { 3 } else { 4 };
                 app.solar.prepare(&data.ephemeris, app.jd)?;
                 app.solar.approach(body)?;

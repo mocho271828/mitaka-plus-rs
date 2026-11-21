@@ -1,5 +1,12 @@
 name: Rust
-on: [pull_request, workflow_dispatch]
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: 各OSの配布物とオフライン用ソースを作成する
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -8,6 +15,8 @@ concurrency:
 env:
   MACOSX_DEPLOYMENT_TARGET: "13.0"
   CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
 jobs:
   workspace:
     strategy:
@@ -20,8 +29,28 @@ jobs:
       - name: Rust toolchain
         run: rustup show active-toolchain
       - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libx11-xcb-dev libxcb-shape0-dev libxcb-xfixes0-dev libwebkit2gtk-4.1-dev libdbus-1-dev
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libx11-xcb-dev libxcb-shape0-dev libxcb-xfixes0-dev libwebkit2gtk-4.1-dev libdbus-1-dev weston xvfb xauth mesa-vulkan-drivers
       - run: cargo fmt --all -- --check
       - run: cargo build --locked --workspace
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo test --locked --workspace
+
+      - name: Create synthetic catalogs
+        run: cargo run --locked -p mitaka-core --example synthetic_chart -- build-test-data
+      - name: Inspect catalogs with native executable
+        run: cargo run --locked -p mitaka-desktop -- --inspect --data-root build-test-data
+      - name: Windows and macOS graphics
+        if: runner.os != 'Linux'
+        run: cargo run --locked -p mitaka-desktop -- --smoke-test --data-root build-test-data
+      - name: Wayland and X11 graphics
+        if: runner.os == 'Linux'
+        run: bash tools/linux-display-test.sh target/debug/mitaka-plus build-test-data
+      - name: Lua host integration
+        shell: bash
+        run: |
+          export MITAKA_TEST_SCRIPT_HELPER="$PWD/target/debug/mitaka-script"
+          if [[ "$RUNNER_OS" == Windows ]]; then MITAKA_TEST_SCRIPT_HELPER="$(cygpath -w "$MITAKA_TEST_SCRIPT_HELPER.exe")"; fi
+          cargo test --locked -p mitaka-desktop drives_real_helper -- --ignored
+  packages:
+    if: github.event_name == 'workflow_dispatch' && inputs.packages
+    uses: ./.github/workflows/package.yml
