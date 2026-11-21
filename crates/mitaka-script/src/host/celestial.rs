@@ -7,7 +7,13 @@ pub(super) fn method(lua: &Lua, obj: &HostObject, name: &str) -> Result<Option<F
     let supported: &[&str] = match obj.name {
         "Stars" => &["select", "deselect", "isSelected", "setBrightnessTo"],
         "Constels" => &["show", "hide", "isVisible"],
-        "Planets" => &["setScale", "getScale", "setScaleMode", "getScaleMode"],
+        "Planets" => &[
+            "toggleAtmosphere",
+            "setScale",
+            "getScale",
+            "setScaleMode",
+            "getScaleMode",
+        ],
         _ => return Ok(None),
     };
     let Some(&method) = supported.iter().find(|m| **m == name) else {
@@ -111,6 +117,14 @@ fn invoke(obj: &HostObject, name: &str, args: &[Value]) -> Result<MultiValue> {
             } else {
                 Ok(MultiValue::new())
             };
+        }
+        ("toggleAtmosphere", []) => {
+            let mode = snapshot()?["atmosphereMode"]
+                .as_u64()
+                .filter(|mode| *mode <= 2)
+                .ok_or_else(|| Error::runtime("invalid atmosphere mode"))?;
+            action["number"] = json!((mode + 1) % 3);
+            71
         }
         ("setScale", [a, b, c, d]) => {
             action["radiusScale"] = json!([positive(a)?, positive(b)?, positive(c)?, positive(d)?]);

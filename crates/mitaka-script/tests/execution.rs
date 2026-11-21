@@ -131,6 +131,11 @@ local x,y,z,w=Camera:getOrient()
 assert(x==0 and y==0 and z==0 and w==1)
 assert(not pcall(function() Camera.setZoomTo(Stars,1,0) end))
 assert(not pcall(function() Camera:setAzimuthTo(0,1,"bad") end))
+for expected=0,2 do
+    Planets:toggleAtmosphere()
+    assert(Planets.atmosphere==expected)
+end
+assert(not pcall(function() Planets:toggleAtmosphere(1) end))
 "#,
     )
     .unwrap();
@@ -153,6 +158,7 @@ assert(not pcall(function() Camera:setAzimuthTo(0,1,"bad") end))
     let mut socket = listener.accept().unwrap();
     let mut actions = Vec::new();
     let mut saw_log = false;
+    let mut atmosphere = 2;
     loop {
         let mut header = [0; 4];
         socket.read_exact(&mut header).unwrap();
@@ -163,10 +169,14 @@ assert(not pcall(function() Camera:setAzimuthTo(0,1,"bad") end))
         let msg: Value = serde_json::from_slice(&body).unwrap();
         let reply = match msg["op"].as_str().unwrap() {
             "snapshot" => {
-                json!({"ok":true, "jd":2451545.0, "distance":1.0, "starLabels":false, "target":"Planet.Earth", "cameraDuration":2.0, "cameraOrientation":[0.0,0.0,0.0,1.0]})
+                json!({"ok":true, "jd":2451545.0, "atmosphereMode":atmosphere, "distance":1.0, "starLabels":false, "target":"Planet.Earth", "cameraDuration":2.0, "cameraOrientation":[0.0,0.0,0.0,1.0]})
             }
             "apply" => {
-                actions.push(msg);
+                if msg["kind"] == 71 {
+                    atmosphere = msg["number"].as_u64().unwrap();
+                } else {
+                    actions.push(msg);
+                }
                 json!({"ok":true})
             }
             "log" => {

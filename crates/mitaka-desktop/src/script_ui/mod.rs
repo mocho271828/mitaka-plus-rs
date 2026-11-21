@@ -25,6 +25,7 @@ pub(super) struct Scripts {
     history: std::collections::VecDeque<String>,
     cursor: Option<usize>,
     draft: String,
+    composing: bool,
 }
 impl Scripts {
     fn append(&mut self, text: &str) {
@@ -315,29 +316,33 @@ impl App {
         egui::Window::new("Lua の実行")
             .open(&mut open)
             .show(ctx, |ui| {
+                let id = ui.make_persistent_id("lua-command");
+                let shortcut = if ui.memory(|m| m.has_focus(id)) {
+                    crate::shortcuts::console(ui.ctx(), &mut self.scripts.composing)
+                } else {
+                    self.scripts.composing = false;
+                    None
+                };
                 ui.add(
                     egui::TextEdit::multiline(&mut self.scripts.input)
+                        .id(id)
                         .hint_text("Lua の式または文")
                         .code_editor()
                         .desired_rows(3)
                         .char_limit(65536),
                 );
                 ui.horizontal(|ui| {
+                    use crate::shortcuts::ConsoleKey;
+                    let can_run =
+                        self.scripts.job.is_none() && !self.scripts.input.trim().is_empty();
+                    run_console = ui.add_enabled(can_run, egui::Button::new("実行")).clicked()
+                        || (can_run && shortcut == Some(ConsoleKey::Run));
+                    let can_go_back =
+                        !self.scripts.history.is_empty() && self.scripts.cursor != Some(0);
                     if ui
-                        .add_enabled(
-                            self.scripts.job.is_none() && !self.scripts.input.trim().is_empty(),
-                            egui::Button::new("実行"),
-                        )
+                        .add_enabled(can_go_back, egui::Button::new("前の入力"))
                         .clicked()
-                    {
-                        run_console = true;
-                    }
-                    if ui
-                        .add_enabled(
-                            !self.scripts.history.is_empty() && self.scripts.cursor != Some(0),
-                            egui::Button::new("前の入力"),
-                        )
-                        .clicked()
+                        || (can_go_back && shortcut == Some(ConsoleKey::Previous))
                     {
                         if self.scripts.cursor.is_none() {
                             self.scripts.draft = self.scripts.input.clone();
@@ -346,9 +351,11 @@ impl App {
                         self.scripts.cursor = Some(i);
                         self.scripts.input = self.scripts.history[i].clone();
                     }
+                    let can_go_forward = self.scripts.cursor.is_some();
                     if ui
-                        .add_enabled(self.scripts.cursor.is_some(), egui::Button::new("次の入力"))
+                        .add_enabled(can_go_forward, egui::Button::new("次の入力"))
                         .clicked()
+                        || (can_go_forward && shortcut == Some(ConsoleKey::Next))
                     {
                         let i = self.scripts.cursor.unwrap() + 1;
                         self.scripts.cursor = (i < self.scripts.history.len()).then_some(i);
