@@ -21,6 +21,7 @@ pub enum Command {
     Horizon,
     Solar,
     SolarControls,
+    Journey,
     CameraControls,
     Land,
     Surface,
@@ -65,6 +66,7 @@ const SETTINGS: &[(Command, &str)] = &[
     (Command::Reset, "視点をリセット"),
     (Command::CameraControls, "カメラ設定…"),
     (Command::SolarControls, "天体を選択・飛行…"),
+    (Command::Journey, "天体間飛行…"),
     (Command::Land, "離着陸 (S)"),
     (Command::Surface, "観測地点の地形を表示…"),
 ];

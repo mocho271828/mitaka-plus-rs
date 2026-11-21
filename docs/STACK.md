@@ -51,10 +51,12 @@
 | 43 | surface-targets | ui・月と9天体の指定地点への飛行 | 体固定座標とv9着陸地点を旧版で照合 | 550 | implemented |
 | 44 | horizon-objects | ui・小天体・探査機の地表視差と注視 | 風景の透過度、選択、旧観測方向を比較 | 500 | implemented |
 | 45 | reproducible-player | infra・再生用WasmのOS間再生成 | Windows改行とmacOS・Linuxの生成バイトを照合 | 150 | implemented |
-| 46 | interplanetary | ui・天体間の飛行 | 旧版の上昇・巡航・下降と衝突中断を比較 | 550 | not-started |
-| 47 | static-html | adapter・信頼したローカルHTMLの静的レイアウト | 表・CSS・リンクをローカル実表示し遷移と再照合を検証 | 450 | not-started |
-| 48 | shared-galaxy | ui・太陽系から銀河への共通視点 | SDSS分類、全件選択、v9復元を照合 | 650 | not-started |
-| 49 | physical-sky | ui・宇宙・地表の恒星点群と地形深度 | 同じ視点からの地形・星・星座と遮蔽を比較 | 700 | not-started |
-| 50 | parity | contract・旧版機能と三OS配布の検証 | 機能別の対応実績、配布物と起動経路を検証 | 機能ごとに分割 | not-started |
+| 46 | interplanetary | ui・天体間の飛行 | 旧版の上昇・巡航・下降と衝突中断を比較 | 550 | implemented |
+| 47 | shared-galaxy | ui・太陽系から銀河への共通視点 | SDSS分類、全件選択、v9復元を照合 | 650 | not-started |
+| 48 | physical-sky | ui・宇宙・地表の恒星点群 | 同じ視点からの地形・星・星座と遮蔽を比較 | 700 | not-started |
+| 49 | static-html | adapter・信頼したローカルHTMLの静的レイアウト | 表・CSS・リンクをローカル実表示し遷移と再照合を検証 | 450 | not-started |
+| 50 | physical-terrain | ui・地表メッシュを物理カメラに統合 | 地形の交点深度、光源、視点に対する稜線の照合 | 550 | not-started |
+| 51 | horizon-transition | ui・地平図の離着陸と投影の引き継ぎ | 地上の姿勢と視野、切り替え開始・終了を照合 | 500 | not-started |
+| 52 | parity | contract・旧版機能と三OS配布の検証 | 機能別の対応実績、配布物と起動経路を検証 | 機能ごとに分割 | not-started |
 
 差分が複数のレビュー理由を持つ場合はその単位を分割する。親が変わる場合は先に表を修正し、レビュー指摘は責務を持つ親で直す。CI結果・実機結果・未実装項目を区別する。下位PRから順にレビューし、全機能の実装と検証が揃った時点でマージ作業へ引き継ぐ。
