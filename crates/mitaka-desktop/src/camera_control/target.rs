@@ -312,6 +312,7 @@ impl App {
         }
         self.motion.place = None;
         self.motion.place_name = None;
+        self.interrupt_journey();
         self.motion.physical_flight = None;
         self.motion.free_physical = false;
         let ground = self
