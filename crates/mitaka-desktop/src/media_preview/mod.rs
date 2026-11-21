@@ -1,4 +1,4 @@
-mod image;
+pub(crate) mod image;
 
 use eframe::egui;
 use std::{
