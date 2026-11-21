@@ -81,6 +81,7 @@ impl Args {
 struct App {
     motion: camera_control::State,
     terrain_amplification: mitaka_core::terrain::Amplification,
+    background_render: layers::background::Renderer,
     landscape_render: layers::landscape::LandscapeRenderer,
     projector: projector::Projector,
     media: media_preview::Media,
@@ -130,6 +131,7 @@ impl App {
             terrain_amplification: Default::default(),
             data: initial,
             motion: Default::default(),
+            background_render: Default::default(),
             landscape_render: Default::default(),
             projector: Default::default(),
             media,
@@ -681,6 +683,13 @@ impl App {
         let Some(data) = self.data.as_ref() else {
             return;
         };
+        self.background_render.paint(
+            &painter,
+            &chart,
+            &data.layers.backgrounds,
+            self.options.layers.milky_way,
+            [self.latitude, self.longitude, self.jd],
+        );
         let show_landscape = view == View::Horizon && self.options.layers.landscape;
         if show_landscape {
             self.landscape_render.prepare(

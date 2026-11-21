@@ -1,3 +1,4 @@
+pub(crate) mod background;
 pub mod catalog;
 mod grid;
 pub(crate) mod landscape;
@@ -25,6 +26,7 @@ pub struct LayerOptions {
     pub brightness: f32,
     pub marking: u8,
     pub landscape: bool,
+    pub milky_way: background::Mode,
     pub observer: Vec<u8>,
     pub selected: Option<BTreeSet<i32>>,
     pub show_all_constellations: bool,
@@ -48,6 +50,7 @@ impl Default for LayerOptions {
             brightness: 1.,
             marking: 0,
             landscape: true,
+            milky_way: Default::default(),
             observer: vec![],
             selected: None,
             show_all_constellations: true,
@@ -96,7 +99,13 @@ impl LayerOptions {
                 });
         }
         ui.checkbox(&mut self.landscape, "観測地点のパノラマ");
-        ui.checkbox(&mut self.landscape, "観測地点のパノラマ");
+        egui::ComboBox::from_label("天の川")
+            .selected_text(self.milky_way.label())
+            .show_ui(ui, |ui| {
+                for mode in background::Mode::ALL {
+                    ui.selectable_value(&mut self.milky_way, mode, mode.label());
+                }
+            });
         ui.collapsing("座標線・星座", |ui| {
             for (setting, name) in [
                 (&mut self.equatorial, "赤道座標"),
@@ -266,6 +275,7 @@ mod tests {
         options.layers.proper_names = true;
         options.layers.ecliptic = true;
         options.layers.galactic = true;
+        options.layers.milky_way = background::Mode::Infrared;
         options.layers.equatorial = true;
         options.layers.horizontal = true;
         let mut session = Session::default();
@@ -275,6 +285,7 @@ mod tests {
         options.layers.save(value, &data);
         let restored = LayerOptions::restore(value, &data).unwrap();
         assert!(restored.illustrations && restored.galactic);
+        assert_eq!(restored.milky_way, background::Mode::Infrared);
         assert_eq!(restored.observer, site.id);
         let frame = ObservationFrame::new(site.latitude, site.longitude_signed(), J2000).unwrap();
         let ctx = egui::Context::default();

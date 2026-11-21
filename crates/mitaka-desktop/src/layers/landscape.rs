@@ -182,8 +182,8 @@ fn raster(
         for &(s, c) in &columns {
             let (forward, projected_right) = (plane * c, plane * s);
             let (right, up) = (
-                projected_right * cr + up * sr,
-                up * cr - projected_right * sr,
+                projected_right * cr - up * sr,
+                up * cr + projected_right * sr,
             );
             let north = forward * ct - up * st;
             let alt = (forward * st + up * ct)
