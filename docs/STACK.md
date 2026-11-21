@@ -24,11 +24,14 @@
 | 16 | playback | 日時の再生・逆再生とカレンダー | 境界停止、月末の扱いとLua経由の時刻設定 | 450 | implemented |
 | 17 | planet-surfaces | 惑星表面のテクスチャ、照明と大気 | 実データ描画、日照と視点の検証 | 1200 | implemented |
 | 18 | minor-bodies | 小天体の元ファイルと位置評価 | 実データの出典照合と位置のオラクル | 1200 | implemented |
-| 19 | media | 画像・音声・動画のローカル再生 | 形式の検証、通常入口と配布同梱の確認 | 900 | not-started |
-| 20 | spacecraft | 探査機の軌道と経路 | 実ファイルの範囲と補間のオラクル | 1000 | not-started |
-| 21 | object-browser | 天体の検索、位置、追従 | 検索・日時の更新・実データによる照合 | 650 | not-started |
-| 22 | display-layers | ui・座標グリッド、恒星・星座と観測地点 | 実カタログの識別と合成投影、描画を照合 | 950 | not-started |
+| 19 | media | 画像・音声・動画のローカル再生 | 形式の検証、通常入口と配布同梱の確認 | 900 | implemented |
+| 20 | spacecraft | 探査機の軌道と経路 | 実ファイルの範囲と補間のオラクル | 1000 | implemented |
+| 21 | object-browser | 天体の検索、位置、追従 | 検索・日時の更新・実データによる照合 | 650 | implemented |
+| 22 | satellite-positions | domain・日心衛星位置と冥王星系の重心補正 | 英日定義とC++基準値、ブラウザの位置契約 | 500 | not-started |
 | 23 | desktop-controls | ui・スクリプトコンソールとデスクトップ操作 | 実Luaの出力、履歴、取消、全画面と画像出力 | 650 | not-started |
-| 24 | parity | contract・旧版機能と三OS配布の検証 | 機能別の対応実績、配布物と起動経路を検証 | 機能ごとに分割 | not-started |
+| 24 | display-layers | ui・座標グリッド、恒星・星座と観測地点 | 実カタログの識別と合成投影、描画を照合 | 950 | not-started |
+| 25 | object-orbits | ui・探査機の点・軌跡と選択 | 同時刻標本と投影、旧描画の比較 | 500 | not-started |
+| 26 | landscape | ui・地平線の地点別パノラマ | 読取専用原画像と方位・仰角を照合 | 500 | not-started |
+| 27 | parity | contract・旧版機能と三OS配布の検証 | 機能別の対応実績、配布物と起動経路を検証 | 機能ごとに分割 | not-started |
 
 差分が複数のレビュー理由を持つ場合はその単位を分割する。親が変わる場合は先に表を修正し、レビュー指摘は責務を持つ親で直す。CI結果・実機結果・未実装項目を区別する。下位PRから順にレビューし、全機能の実装と検証が揃った時点でマージ作業へ引き継ぐ。
