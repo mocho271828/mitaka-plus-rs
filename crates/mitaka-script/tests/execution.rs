@@ -52,6 +52,48 @@ waitTime(0)
     assert_eq!(output.stderr, b"error stream");
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn loads_a_native_module_against_the_helpers_lua_api() {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join("answer.c"),
+        r#"#include "lauxlib.h"
+int luaopen_answer(lua_State *L) {
+    luaL_checkversion(L);
+    lua_pushinteger(L, 42);
+    return 1;
+}
+"#,
+    )
+    .unwrap();
+    let compiler = Command::new("cc")
+        .current_dir(dir.path())
+        .args(["-shared", "-fPIC", "-I"])
+        .arg(Path::new(env!("OUT_DIR")).join("lua-5.4.9/src"))
+        .args(["answer.c", "-o", "answer.so"])
+        .output()
+        .unwrap();
+    assert!(
+        compiler.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiler.stderr)
+    );
+    let script = dir.path().join("probe.lua");
+    fs::write(
+        &script,
+        "package.cpath = './?.so'\nlocal answer = require('answer')\nprint(answer)",
+    )
+    .unwrap();
+    let output = Command::new(EXE).arg(script).output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"42\n");
+}
+
 #[test]
 fn reports_compile_runtime_file_and_resource_errors() {
     let dir = tempdir().unwrap();
