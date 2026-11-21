@@ -8,7 +8,7 @@ use std::{
 
 pub struct SkyData {
     pub root: PathBuf,
-    date_range: [f64; 2],
+    pub(super) date_range: [f64; 2],
     pub stars: Vec<Star>,
     pub by_hip: HashMap<i32, usize>,
     pub constellations: Vec<Constellation>,

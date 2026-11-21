@@ -26,6 +26,23 @@ fn parse_utc(text: &str) -> Option<f64> {
     Some(UNIX_EPOCH_JD + date.and_utc().timestamp() as f64 / 86400.)
 }
 
+fn update_observation_date(
+    jd: &mut f64,
+    utc: &mut String,
+    requested: f64,
+    date_range: Option<[f64; 2]>,
+) -> Result<(), &'static str> {
+    mitaka_core::astronomy::gregorian_date_time(requested)
+        .map_err(|_| "日時が天文計算の有効範囲外です")?;
+    if date_range.is_some_and(|[start, end]| !(start..=end).contains(&requested)) {
+        return Err("日時がCF96暦表の有効範囲外です");
+    }
+    let date = utc_date(requested).ok_or("日時の範囲外です")?;
+    *utc = date.format("%Y-%m-%d %H:%M:%S").to_string();
+    *jd = requested;
+    Ok(())
+}
+
 #[derive(Default)]
 struct Args {
     data: Option<PathBuf>,
@@ -125,9 +142,13 @@ impl App {
         }
     }
     fn set_date(&mut self, jd: f64) {
-        if let Some(utc) = utc_date(jd) {
-            self.jd = jd;
-            self.utc = utc.format("%Y-%m-%d %H:%M:%S").to_string();
+        if let Err(error) = update_observation_date(
+            &mut self.jd,
+            &mut self.utc,
+            jd,
+            self.data.as_ref().map(|data| data.date_range),
+        ) {
+            self.error = Some(error.into());
         }
     }
     fn open(&mut self) {
@@ -460,6 +481,36 @@ mod tests {
             "1970-01-01T00:00:00+00:00"
         );
         assert_eq!(parse_utc("2001-02-29 12:00:00"), None);
+    }
+    #[test]
+    fn next_day_preserves_the_last_renderable_date() {
+        let mut jd = J2000;
+        let mut utc = String::new();
+        let last = parse_utc("9999-12-31 23:59:59").unwrap();
+        update_observation_date(&mut jd, &mut utc, last, None).unwrap();
+        assert!(utc_date(last + 1.).is_some());
+        assert_eq!(
+            update_observation_date(&mut jd, &mut utc, last + 1., None),
+            Err("日時が天文計算の有効範囲外です")
+        );
+        assert_eq!(jd, last);
+        assert_eq!(utc, "9999-12-31 23:59:59");
+        assert!(ObservationFrame::new(35., 139., jd).is_ok());
+    }
+    #[test]
+    fn date_changes_respect_both_ends_of_the_loaded_ephemeris() {
+        let (mut jd, mut utc) = (J2000, String::new());
+        let range = Some([J2000, J2000 + 1.]);
+        for (endpoint, outside) in [(J2000, J2000 - 1.), (J2000 + 1., J2000 + 2.)] {
+            update_observation_date(&mut jd, &mut utc, endpoint, range).unwrap();
+            let previous = utc.clone();
+            assert_eq!(
+                update_observation_date(&mut jd, &mut utc, outside, range),
+                Err("日時がCF96暦表の有効範囲外です")
+            );
+            assert_eq!(jd, endpoint);
+            assert_eq!(utc, previous);
+        }
     }
     #[test]
     fn reject_missing_path_or_conflicting_modes() {
