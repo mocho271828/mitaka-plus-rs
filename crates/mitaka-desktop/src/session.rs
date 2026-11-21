@@ -1,6 +1,7 @@
 //! JSON v9 の検証。未知のキーや保存ファイル内のパスを実行・展開しない。
 //! 移植元は Mitaka_plus f9fe624 の session_state.mm / session_layers_json.mm。
 use base64::{engine::general_purpose::STANDARD, Engine};
+use mitaka_core::terrain::Amplification;
 use serde_json::Value;
 use std::{
     collections::BTreeSet,
@@ -34,11 +35,14 @@ fn range(v: &Value, name: &str, min: f64, max: f64) -> Result<f64> {
     Ok(n)
 }
 fn integer(v: &Value, name: &str, min: i64, max: i64) -> Result<i64> {
-    let n = range(v, name, min as f64, max as f64)?;
-    if n != n.trunc() {
-        return Err(err(name));
-    }
-    Ok(n as i64)
+    integer_value(&v[name], name, min, max)
+}
+fn integer_value(value: &Value, name: &str, min: i64, max: i64) -> Result<i64> {
+    value
+        .as_f64()
+        .filter(|n| n.fract() == 0. && (min as f64..=max as f64).contains(n))
+        .map(|n| n as i64)
+        .ok_or_else(|| err(name))
 }
 fn vector(v: &Value) -> Result<[f64; 3]> {
     let a = v
@@ -140,6 +144,11 @@ impl Session {
             }
             h.entry("roll_deg").or_insert(Value::from(0));
         }
+        if let Some(zone) = v.get_mut("plus_time_zone").filter(|zone| !zone.is_null()) {
+            let seconds = integer(zone, "seconds_west_utc", i32::MIN.into(), i32::MAX.into())?;
+            // GUI と Lua ホストが、旧v9の -32400.0 なども同じ整数値として読む。
+            zone["seconds_west_utc"] = seconds.into();
+        }
         check_shape(&v, &ref_state.0, "root")?;
         // 保存対象は表示状態だけ。追加フィールドにHTMLの信頼やLua実行文脈を持ち込まない。
         let root = v.as_object_mut().ok_or_else(|| err("root"))?;
@@ -156,6 +165,10 @@ impl Session {
         out.as_file().sync_all()?;
         out.persist(path)?;
         Ok(())
+    }
+    pub fn terrain_amplification(&self) -> Result<Amplification> {
+        let stage = integer(&self.0, "terrain_amplification", 1, 5)?;
+        Amplification::from_stage(stage as u64)
     }
     fn validate(&self) -> Result<()> {
         let v = &self.0;
@@ -269,7 +282,7 @@ impl Session {
                 return Err(err("surface_site.height_km"));
             }
         }
-        integer(v, "terrain_amplification", 1, 5)?;
+        self.terrain_amplification()?;
         integer(v, "milky_way_mode", 0, 3)?;
         integer(&v["radius_display"], "mode", 0, 1)?;
         for (obj, prop) in [
@@ -296,21 +309,10 @@ impl Session {
         integer(ts, "utc_offset_minutes", -840, 840)?;
         integer(&v["plus_time"], "step", 0, 11)?;
         integer(&v["plus_time"], "speed", i32::MIN.into(), i32::MAX.into())?;
-        if !v["plus_time_zone"].is_null() {
-            integer(
-                &v["plus_time_zone"],
-                "seconds_west_utc",
-                i32::MIN.into(),
-                i32::MAX.into(),
-            )?;
-        }
         key(&v["observer_place_identifier_base64"], true)?;
         let mut selected = BTreeSet::new();
         for hip in array(v, "selected_star_name_hips")? {
-            let n = hip
-                .as_i64()
-                .filter(|h| (1..=i64::from(i32::MAX)).contains(h))
-                .ok_or_else(|| err("HIP"))?;
+            let n = integer_value(hip, "HIP", 1, i32::MAX.into())?;
             if !selected.insert(n) {
                 return Err(err("duplicate HIP"));
             }
@@ -409,6 +411,33 @@ mod tests {
         assert!(Session::decode(&vec![b' '; LIMIT + 1]).is_err());
         let mut s = Session::default();
         s.0["satellites"]["sources"] = serde_json::json!([{"source_key_base64":"YQ==","byte_count":12,"sha256":"0".repeat(64)}]);
+        assert!(Session::decode(&serde_json::to_vec(&s.0).unwrap()).is_err());
+    }
+
+    #[test]
+    fn accepts_integral_json_numbers_for_terrain_stages_hips_and_local_time() {
+        let mut s = Session::default();
+        s.0["terrain_amplification"] = serde_json::json!(2.0);
+        s.0["selected_star_name_hips"] = serde_json::json!([123.0]);
+        s.0["plus_time_zone"] = serde_json::json!({"seconds_west_utc": -32400.0});
+        let decoded = Session::decode(&serde_json::to_vec(&s.0).unwrap()).unwrap();
+        assert_eq!(
+            decoded.0["plus_time_zone"]["seconds_west_utc"].as_i64(),
+            Some(-32400)
+        );
+        assert_eq!(
+            decoded.terrain_amplification().unwrap(),
+            Amplification::Double
+        );
+        s.0["selected_star_name_hips"] = serde_json::json!([123, 123.0]);
+        assert!(Session::decode(&serde_json::to_vec(&s.0).unwrap()).is_err());
+        s.0["selected_star_name_hips"] = serde_json::json!([123.5]);
+        assert!(Session::decode(&serde_json::to_vec(&s.0).unwrap()).is_err());
+        s.0["selected_star_name_hips"] = serde_json::json!([]);
+        s.0["terrain_amplification"] = serde_json::json!(2.5);
+        assert!(Session::decode(&serde_json::to_vec(&s.0).unwrap()).is_err());
+        s.0["terrain_amplification"] = serde_json::json!(2);
+        s.0["plus_time_zone"]["seconds_west_utc"] = serde_json::json!(5.5);
         assert!(Session::decode(&serde_json::to_vec(&s.0).unwrap()).is_err());
     }
 }

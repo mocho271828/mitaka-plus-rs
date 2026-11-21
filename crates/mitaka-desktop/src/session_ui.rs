@@ -131,17 +131,14 @@ impl App {
                 offset_au: std::array::from_fn(|i| p["offset_au"][i].as_f64().unwrap()),
             });
         let layers = crate::layers::LayerOptions::restore(v, data)?;
+        let terrain_amplification = state.terrain_amplification()?;
         // 検証と出典照合が全て成功してから、補間を停止して一括適用する。
         self.objects = Default::default();
         self.objects.selections = selections;
         self.objects.display = crate::objects::Browser::restore_display(v);
         self.scripts.cancel();
         self.options.layers = layers;
-        self.terrain_amplification = mitaka_core::terrain::Amplification::from_stage(
-            v["terrain_amplification"]
-                .as_u64()
-                .ok_or_else(|| io::Error::other("地形倍率段階が不正です"))?,
-        )?;
+        self.terrain_amplification = terrain_amplification;
         self.solar.stop();
         self.set_date(jd);
         self.camera_extras_after_restore(camera, restored_site);
