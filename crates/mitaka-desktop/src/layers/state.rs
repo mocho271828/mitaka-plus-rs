@@ -15,10 +15,10 @@ macro_rules! flags {
         }
         pub fn snapshot(&self,mut reply:Value)->Value{
             $(reply[$host]=json!(self.$field);)+
-            reply["starBrightness"]=json!(self.brightness);reply["starMarking"]=json!(MARKS[self.marking as usize]);reply
+            reply["starBrightness"]=json!(self.brightness);reply["starMarking"]=json!(MARKS[self.marking as usize]);reply["landscape"]=json!(self.landscape);reply
         }
         fn flag(&mut self,kind:u64)->Option<&mut bool>{
-            match kind{$($kind=>Some(&mut self.$field),)+_=>None}
+            match kind{$($kind=>Some(&mut self.$field),)+83=>Some(&mut self.landscape),_=>None}
         }
     }
 }
@@ -69,6 +69,7 @@ impl LayerOptions {
                 .copied()
                 .collect::<BTreeSet<_>>()),
         };
+        v["show_landscape_image"] = json!(self.landscape);
         v["observer_place_identifier_base64"] = json!(STANDARD.encode(&self.observer));
         v["constellations"]["default_visible"] = json!(self.show_all_constellations);
         v["constellations"]["exceptions_base64"] = json!(self
@@ -83,6 +84,7 @@ impl LayerOptions {
         // 呼出元の Session::read は全フィールドの必須性・型・数値範囲を確認済み。
         out.marking = v["stars"]["marking"].as_f64().unwrap() as u8;
         out.brightness = v["stars"]["brightness"].as_f64().unwrap() as f32;
+        out.landscape = v["show_landscape_image"].as_bool().unwrap();
         out.show_all_constellations = v["constellations"]["default_visible"].as_bool().unwrap();
         for id in v["constellations"]["exceptions_base64"].as_array().unwrap() {
             let raw = STANDARD

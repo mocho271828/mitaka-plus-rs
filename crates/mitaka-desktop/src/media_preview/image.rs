@@ -12,7 +12,7 @@ fn invalid(msg: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, msg)
 }
 
-pub fn load(path: &Path) -> io::Result<egui::ColorImage> {
+fn load_rgba(path: &Path, landscape: bool) -> io::Result<image::RgbaImage> {
     let mut opts = OpenOptions::new();
     opts.read(true);
     #[cfg(unix)]
@@ -36,6 +36,19 @@ pub fn load(path: &Path) -> io::Result<egui::ColorImage> {
     match reader.format() {
         Some(ImageFormat::Png) if bytes.ends_with(b"\0\0\0\0IEND\xaeB\x60\x82") => {}
         Some(ImageFormat::Jpeg) if bytes.ends_with(&[0xff, 0xd9]) => {}
+        Some(ImageFormat::Bmp)
+            if landscape && bytes.get(28..30).is_some_and(|v| matches!(v, [24 | 32, 0])) => {}
+        None if landscape
+            && path
+                .extension()
+                .is_some_and(|v| v.eq_ignore_ascii_case("tga"))
+            && bytes.len() >= 18
+            && matches!(bytes[2], 2 | 10)
+            && matches!(bytes[16], 16 | 24 | 32) =>
+        {
+            reader.set_format(ImageFormat::Tga);
+        }
+        _ if landscape => return Err(invalid("完全なPNG/JPEG/BMP/TGA風景画像が必要です")),
         _ => return Err(invalid("完全な PNG または JPEG 画像を選択してください")),
     }
     let mut limits = Limits::default();
@@ -53,7 +66,15 @@ pub fn load(path: &Path) -> io::Result<egui::ColorImage> {
     if image.width() > 1024 || image.height() > 1024 {
         image = image.thumbnail(1024, 1024);
     }
-    let image = image.to_rgba8();
+    Ok(image.to_rgba8())
+}
+
+pub(crate) fn load_landscape(path: &Path) -> io::Result<image::RgbaImage> {
+    load_rgba(path, true)
+}
+
+pub fn load(path: &Path) -> io::Result<egui::ColorImage> {
+    let image = load_rgba(path, false)?;
     Ok(egui::ColorImage::from_rgba_unmultiplied(
         [image.width() as usize, image.height() as usize],
         &image,

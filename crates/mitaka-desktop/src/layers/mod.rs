@@ -1,5 +1,6 @@
 pub mod catalog;
 mod grid;
+pub(crate) mod landscape;
 mod render;
 mod state;
 mod stellar;
@@ -23,6 +24,7 @@ pub struct LayerOptions {
     pub hip: bool,
     pub brightness: f32,
     pub marking: u8,
+    pub landscape: bool,
     pub observer: Vec<u8>,
     pub selected: Option<BTreeSet<i32>>,
     pub show_all_constellations: bool,
@@ -45,6 +47,7 @@ impl Default for LayerOptions {
             hip: false,
             brightness: 1.,
             marking: 0,
+            landscape: true,
             observer: vec![],
             selected: None,
             show_all_constellations: true,
@@ -92,6 +95,8 @@ impl LayerOptions {
                     }
                 });
         }
+        ui.checkbox(&mut self.landscape, "観測地点のパノラマ");
+        ui.checkbox(&mut self.landscape, "観測地点のパノラマ");
         ui.collapsing("座標線・星座", |ui| {
             for (setting, name) in [
                 (&mut self.equatorial, "赤道座標"),
