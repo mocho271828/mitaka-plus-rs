@@ -8,12 +8,21 @@ use std::{
 
 pub struct SkyData {
     pub root: PathBuf,
+    date_range: [f64; 2],
     pub stars: Vec<Star>,
     pub by_hip: HashMap<i32, usize>,
     pub constellations: Vec<Constellation>,
     pub ephemeris: Cf96Ephemeris,
 }
 impl SkyData {
+    pub fn initial_date(&self, preferred: f64) -> f64 {
+        if (self.date_range[0]..=self.date_range[1]).contains(&preferred) {
+            preferred
+        } else {
+            self.date_range[0]
+        }
+    }
+
     pub fn open(root: &Path) -> io::Result<Self> {
         let stars = catalog::load_hipparcos(&root.join("hip.dat"))?;
         if stars.is_empty() || stars.iter().any(|s| !(-90. ..=90.).contains(&s.dec_deg)) {
@@ -31,8 +40,34 @@ impl SkyData {
             Err(err) if err.kind() == io::ErrorKind::NotFound => Vec::new(),
             result => result?,
         };
+        for record in &constellations {
+            if !(-90. ..=90.).contains(&record.dec_deg)
+                || record
+                    .boundary
+                    .iter()
+                    .any(|p| !(-90. ..=90.).contains(&p[1]))
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "{}: 星座レコード {} の赤緯が範囲外です",
+                        constellation_file.display(),
+                        record.source_row
+                    ),
+                ));
+            }
+        }
         let ephemeris = Cf96Ephemeris::load(&root.join("cf96.dat"))?;
+        let mut date_range = ephemeris.time_range(0)?;
+        for i in 1..ephemeris.planet_count() {
+            let [lo, hi] = ephemeris.time_range(i)?;
+            date_range = [lo.max(date_range[0]), hi.min(date_range[1])];
+        }
+        if date_range[0] > date_range[1] {
+            return Err(io::Error::other("暦表の有効範囲が重なりません"));
+        }
         Ok(Self {
+            date_range,
             root: root.to_path_buf(),
             stars,
             by_hip,
