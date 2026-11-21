@@ -144,7 +144,7 @@ impl App {
                 "timeSetting":self.settings,
                 "placeSetting":self.settings,
                 "scriptOutput":self.scripts.panel,
-                "dualScreen":false,
+                "dualScreen":self.projector.open,
             })),
             Some("apply") => {
                 match msg["kind"].as_u64() {
@@ -158,12 +158,13 @@ impl App {
                             _ => self.solar.surfaces.eclipse = flag,
                         }
                     }
-                    Some(kind @ (13..=16 | 41)) => {
+                    Some(kind @ (13..=17 | 41)) => {
                         let enabled = msg["enabled"].as_bool().ok_or("真偽値が必要です")?;
                         match kind {
                             13 => self.objects.open = enabled,
                             14 | 15 => self.settings = enabled,
                             16 => self.scripts.panel = enabled,
+                            17 => self.projector.open = enabled,
                             _ => ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(enabled)),
                         }
                     }

@@ -3,6 +3,7 @@ use eframe::egui;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
     Media,
+    Projector,
     Fullscreen,
     About,
     RunScript,
@@ -38,6 +39,7 @@ const FILE: &[(Command, &str)] = &[
     (Command::Export, "画像を書き出す…"),
 ];
 const DISPLAY: &[(Command, &str)] = &[
+    (Command::Projector, "投影ウィンドウ…"),
     (Command::Fullscreen, "全画面表示を切り替える"),
     (Command::Sky, "全天図"),
     (Command::Horizon, "地平図"),

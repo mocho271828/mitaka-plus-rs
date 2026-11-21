@@ -8,6 +8,7 @@ mod media_preview;
 mod objects;
 mod playback;
 mod projection;
+mod projector;
 mod script_ui;
 mod session;
 mod session_ui;
@@ -75,6 +76,7 @@ impl Args {
     }
 }
 struct App {
+    projector: projector::Projector,
     media: media_preview::Media,
     scripts: script_ui::Scripts,
     playback: playback::Playback,
@@ -116,6 +118,7 @@ impl App {
         let menus = Menus::new(cc)?;
         Ok(Self {
             data: initial,
+            projector: Default::default(),
             media: Default::default(),
             scripts: Default::default(),
             playback: Default::default(),
@@ -189,6 +192,10 @@ impl App {
         match command {
             Command::Open => self.open(),
             Command::Media => self.media.choose(ctx),
+            Command::Projector => {
+                self.projector.controls = true;
+                self.projector.open = true;
+            }
             Command::Fullscreen => ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(
                 !ctx.input(|i| i.viewport().fullscreen.unwrap_or(false)),
             )),
@@ -385,6 +392,7 @@ impl App {
                 );
                 ui.label("天文データ・画像の権利は各制作者に帰属します。");
             });
+        self.projector.settings(ctx);
         self.object_panels(ctx);
         self.solar.panel(ctx);
         if let Some(g) = &mut self.galaxies {
@@ -608,9 +616,14 @@ impl eframe::App for App {
                 }
             }
         }
-        egui::CentralPanel::default()
+        let canvas_layer = egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(Color32::from_rgb(6, 11, 18)))
-            .show(ctx, |ui| self.canvas(ui));
+            .show(ctx, |ui| {
+                self.canvas(ui);
+                ui.layer_id()
+            })
+            .inner;
+        self.projector.frame(ctx, canvas_layer, self.canvas_rect);
         if self.playback.show && self.data.is_some() {
             egui::Area::new("current date".into())
                 .anchor(egui::Align2::LEFT_BOTTOM, [8., -8.])
