@@ -5,12 +5,12 @@ cd "$(dirname "$0")/.."
 out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
 cargo metadata --locked --format-version 1 > "$out/metadata.json"
-target_dir="$(jq -r .target_directory "$out/metadata.json")"
+target_dir="$(jq -r '.target_directory | gsub("\\\\"; "/")' "$out/metadata.json")"
 version="$(jq -r '.packages[] | select(.name == "mitaka-desktop") | .version' "$out/metadata.json")"
 mkdir -p dist "$out/licenses"
 cp LICENSE licenses/Mitaka.txt crates/mitaka-script/vendor/LUA_LICENSE.txt "$out/licenses/"
 # バイナリに取り込む依存の許諾文も配布物から読めるようにする。
-jq -r '.packages[] | select(.source != null) | [.name, .version, .manifest_path] | @tsv' "$out/metadata.json" |
+jq -r '.packages[] | select(.source != null) | [.name, .version, (.manifest_path | gsub("\\\\"; "/"))] | @tsv' "$out/metadata.json" |
 while IFS=$'\t' read -r name ver manifest; do
     package_dir="$(dirname "$manifest")"
     dest="$out/licenses/$name-$ver"
