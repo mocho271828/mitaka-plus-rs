@@ -44,7 +44,7 @@
 | 36 | milky-way | ui・全天・地平図の銀河背景 | 元の写真・銀河座標と遮蔽、表示設定を検証 | 450 | implemented |
 | 37 | camera-targets | ui・名前で指定した銀河・球状星団・星座の追従 | 登録名と物理位置の対照、同名の拒否 | 400 | implemented |
 | 38 | viewer-controls | ui・ポインター選択、距離目盛と表示設定 | Lua・手動変更とセッションの整合 | 500 | implemented |
-| 39 | sky-deep-catalogs | ui・全天図のNGC・SDSSと地平姿勢 | 全銀河の密度積算と投影座標の対照 | 600 | not-started |
+| 39 | sky-deep-catalogs | ui・全天図のNGC・SDSSと地平姿勢 | 全銀河の密度積算と投影座標の対照 | 600 | implemented |
 | 40 | eclipse-layers | ui・食の境界、本影と半影の円錐 | 旧版の遮蔽物と接線位置の照合 | 550 | not-started |
 | 41 | display-script | adapter・恒星名、星座指定と惑星の表示倍率 | 実Luaとv9の相互運用、異常入力 | 550 | not-started |
 | 42 | parity | contract・旧版機能と三OS配布の検証 | 機能別の対応実績、配布物と起動経路を検証 | 機能ごとに分割 | not-started |

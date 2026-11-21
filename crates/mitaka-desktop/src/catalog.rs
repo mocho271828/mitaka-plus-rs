@@ -7,6 +7,7 @@ use std::{
 };
 
 pub struct SkyData {
+    pub deep_sky: std::cell::RefCell<crate::deep_sky::Scene>,
     pub layers: crate::layers::catalog::LayersCatalog,
     pub root: PathBuf,
     pub date_range: [f64; 2],
@@ -57,6 +58,7 @@ impl SkyData {
             return Err(io::Error::other("暦表と月位置計算の有効範囲が重なりません"));
         }
         Ok(Self {
+            deep_sky: Default::default(),
             layers: crate::layers::catalog::LayersCatalog::load(root, &constellations),
             date_range,
             root: root.to_path_buf(),
