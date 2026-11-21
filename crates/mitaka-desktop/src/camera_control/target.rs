@@ -101,6 +101,17 @@ impl Object {
                 unit.dot(local.y_axis).clamp(-1., 1.).asin().to_degrees(),
             ]);
         }
+        if let Self::Catalog(c) = self {
+            if c.surface_parallax {
+                let observer = mitaka_core::topocentric::Observer::from_ephemeris(
+                    &sky.ephemeris,
+                    app.jd,
+                    app.latitude,
+                    app.longitude,
+                )?;
+                return Ok(observer.observe(c.position(sky, app.jd)?)?.horizontal_deg);
+            }
+        }
         let eq = if let Self::Direction(coords) = self {
             *coords
         } else if let Self::Hip(hip) = self {

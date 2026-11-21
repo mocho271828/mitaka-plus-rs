@@ -2,6 +2,7 @@
 mod app;
 mod catalog;
 pub(crate) mod display;
+pub(crate) mod horizon;
 mod layers;
 mod satellite;
 pub(crate) mod selections;
@@ -74,6 +75,7 @@ impl Position {
 }
 #[derive(Default)]
 pub(crate) struct Browser {
+    horizon: horizon::Layer,
     pub open: bool,
     pub(crate) selections: selections::Selections,
     kind: Kind,
@@ -236,10 +238,15 @@ impl Browser {
                         .show_rows(ui, height, count, |ui, range| {
                             for index in range {
                                 let i = self.filtered.as_ref().map_or(index, |rows| rows[index]);
-                                if ui
-                                    .selectable_label(Some(i) == self.active, c.title(i))
-                                    .clicked()
-                                {
+                                let row = ui.selectable_label(Some(i) == self.active, c.title(i));
+                                let mut center = row.clicked();
+                                row.context_menu(|ui| {
+                                    if ui.button("中央に表示").clicked() {
+                                        center = true;
+                                        ui.close_menu();
+                                    }
+                                });
+                                if center {
                                     self.active = Some(i);
                                     self.marker = None;
                                     self.error = None;
@@ -317,6 +324,7 @@ impl Browser {
 }
 
 pub(crate) struct ScriptTarget {
+    pub(crate) surface_parallax: bool,
     catalog: Catalog,
     row: usize,
 }
@@ -336,7 +344,11 @@ impl ScriptTarget {
             .active
             .and_then(|i| browser.data.as_ref()?.satellite_source(i));
         let row = catalog.script_row(prefix, key, preferred)?;
-        Ok(Self { catalog, row })
+        Ok(Self {
+            catalog,
+            row,
+            surface_parallax: matches!(kind, Kind::Small | Kind::Spacecraft),
+        })
     }
     pub(crate) fn position(&self, sky: &SkyData, jd: f64) -> io::Result<[f64; 3]> {
         match self.catalog.locate(self.row, sky, jd)? {
