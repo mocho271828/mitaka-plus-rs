@@ -127,6 +127,7 @@ impl App {
             Some("snapshot") => Ok(self.camera_snapshot(self.options.layers.snapshot(json!({
                 "ok":true,
                 "jd":self.jd,
+                "plusTimeZoneWestSeconds":self.session.0["plus_time_zone"]["seconds_west_utc"],
                 "lines":self.options.lines,
                 "labels":self.options.labels,
                 "timeSpeed":self.playback.plus_speed,
@@ -150,6 +151,11 @@ impl App {
                 "scriptOutput":self.scripts.panel,
                 "dualScreen":self.projector.open,
             })))),
+            Some("time_animation") => {
+                self.animate_time(msg)?;
+                ctx.request_repaint();
+                Ok(json!({"ok":true}))
+            }
             Some("apply") => {
                 match msg["kind"].as_u64() {
                     Some(kind @ (3 | 4 | 12 | 89..=105)) => self.camera_action(kind, msg, ctx)?,
@@ -450,6 +456,15 @@ impl App {
         let file = local_source(
             dir.path(),
             r#"
+local saved = Time.JD
+Time:setTime(2000,2,30,3,4,5)
+assert(Time:getTimeString() == '2000,3,1,3,4,5')
+Time.min = 61
+assert(Time.hour == 4 and Time.minute == 1)
+local date = '0x7d0,01,02,03,04,05suffix'
+assert(Time:setTimeString(date) == date and Time.day == 2)
+assert(not pcall(function() return Time.localYear end))
+Time:setJDTo(saved, 0, false)
 Camera.target='Planet.Earth'
 assert(Camera.target=='Planet.Earth')
 Camera.duration=0

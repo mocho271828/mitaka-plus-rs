@@ -1,3 +1,4 @@
+mod calendar;
 mod camera;
 use interprocess::local_socket::{Stream, prelude::*};
 use mlua::{Error, Lua, Value as LuaValue};
@@ -196,6 +197,11 @@ impl HostObject {
 impl UserData for HostObject {
     fn add_methods<M: UserDataMethods<Self>>(m: &mut M) {
         m.add_meta_method(MetaMethod::Index, |lua, obj, key: String| {
+            if obj.name == "Time"
+                && let Some(v) = calendar::get(lua, obj, &key)?
+            {
+                return Ok(v);
+            }
             if obj.name == "Camera"
                 && let Some(f) = camera::method(lua, obj, &key)?
             {
@@ -223,6 +229,9 @@ impl UserData for HostObject {
         m.add_meta_method(
             MetaMethod::NewIndex,
             |_, obj, (key, value): (String, LuaValue)| {
+                if obj.name == "Time" && calendar::set_component(obj, &key, &value)? {
+                    return Ok(());
+                }
                 let f = FIELDS
                     .iter()
                     .find(|f| f.object == obj.name && f.name == key)
