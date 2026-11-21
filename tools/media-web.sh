@@ -8,10 +8,11 @@ trap 'rm -rf "$tmp"' EXIT
 cargo metadata --locked --offline --format-version 1 > "$tmp/metadata.json"
 target="$(jq -r .target_directory "$tmp/metadata.json")"
 flags="--remap-path-prefix=$PWD=/mitaka"
+flags+=$'\x1f'"-Cstrip=debuginfo"
 while IFS= read -r registry; do
     flags+=$'\x1f'"--remap-path-prefix=$registry=/cargo/source"
 done < <(jq -r '.packages[] | select(.source != null) | .manifest_path | gsub("\\\\";"/") | split("/")[:-2] | join("/")' "$tmp/metadata.json" | sort -u)
-CARGO_ENCODED_RUSTFLAGS="$flags" cargo build --frozen -p mitaka-media-web --lib --target wasm32-unknown-unknown --release
+RUSTC_WRAPPER="$PWD/tools/media-web-rustc.sh" CARGO_ENCODED_RUSTFLAGS="$flags" cargo build --frozen -p mitaka-media-web --lib --target wasm32-unknown-unknown --release
 cargo run --frozen -p mitaka-media-web --features generate --bin mitaka-media-bindings -- "$target/wasm32-unknown-unknown/release/mitaka_media_web.wasm" "$tmp/out"
 out=crates/mitaka-desktop/src/bin/mitaka-media/web
 for file in controls.js controls_bg.wasm; do

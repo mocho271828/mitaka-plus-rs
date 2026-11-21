@@ -50,7 +50,7 @@
 | 42 | object-groups | ui・小天体・衛星・探査機の同時表示と軌道 | 分類・日時・表示状態とLuaの往復を照合 | 700 | implemented |
 | 43 | surface-targets | ui・月と9天体の指定地点への飛行 | 体固定座標とv9着陸地点を旧版で照合 | 550 | implemented |
 | 44 | horizon-objects | ui・小天体・探査機の地表視差と注視 | 風景の透過度、選択、旧観測方向を比較 | 500 | implemented |
-| 45 | reproducible-player | infra・再生用WasmのOS間再生成 | Windows改行とmacOS・Linuxの生成バイトを照合 | 150 | not-started |
+| 45 | reproducible-player | infra・再生用WasmのOS間再生成 | Windows改行とmacOS・Linuxの生成バイトを照合 | 150 | implemented |
 | 46 | interplanetary | ui・天体間の飛行 | 旧版の上昇・巡航・下降と衝突中断を比較 | 550 | not-started |
 | 47 | static-html | adapter・信頼したローカルHTMLの静的レイアウト | 表・CSS・リンクをローカル実表示し遷移と再照合を検証 | 450 | not-started |
 | 48 | shared-galaxy | ui・太陽系から銀河への共通視点 | SDSS分類、全件選択、v9復元を照合 | 650 | not-started |
