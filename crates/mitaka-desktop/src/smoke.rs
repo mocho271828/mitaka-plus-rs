@@ -359,6 +359,7 @@ impl Smoke {
                 unique.len()
             );
             if let Some(dir) = &self.captures {
+                std::fs::create_dir_all(dir)?;
                 let root = &app.data.as_ref().unwrap().root;
                 capture::save(
                     &image,
