@@ -29,7 +29,7 @@ JPEG・PNG は星図と同じウィンドウで、位置・倍率・回転・不
 
 ## ビルドと確認
 
-通常は `cargo build --locked --workspace --bins` でデスクトップとプレーヤーをビルドします。ビルド時は同梱 JavaScript/Wasm の SHA-256 を確認します。固定版 Rust 1.100.0 の `wasm32-unknown-unknown` 標準ライブラリを準備して `bash tools/media-web.sh --check` を実行すると、Rust ソースから両ファイルを再生成してバイト単位で比較します。変更時は `--write` を使います。生成ライブラリ・Rust 側の依存はルートの Cargo.lock とオフライン配布の vendor に含まれます。Rust ツールチェーンと Wasm ターゲットの標準ライブラリは事前に導入してください。
+通常は `cargo build --locked --workspace --bins` でデスクトップとプレーヤーをビルドします。ビルド時は同梱 JavaScript/Wasm の SHA-256 を確認します。生成時は対象Wasmクレートの識別子をロック済みのパッケージ名と版から決めます。これによりLinux x86_64とmacOS arm64で生成バイトを照合できます。固定版 Rust 1.100.0 の `wasm32-unknown-unknown` 標準ライブラリを準備して `bash tools/media-web.sh --check` を実行すると、Rust ソースから両ファイルを再生成してバイト単位で比較します。変更時は `--write` を使います。生成ライブラリ・Rust 側の依存はルートの Cargo.lock とオフライン配布の vendor に含まれます。Rust ツールチェーンと Wasm ターゲットの標準ライブラリは事前に導入してください。
 
 ```sh
 cargo test --locked --workspace
