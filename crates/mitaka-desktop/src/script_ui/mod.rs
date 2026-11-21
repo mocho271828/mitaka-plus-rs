@@ -135,6 +135,9 @@ impl App {
                 "timeInfo":self.playback.show,
                 "realtime":self.playback.realtime,
                 "planetOrbits":self.solar.orbits,
+                "planetsVisible":self.solar.layers.visible,
+                "planetLabels":self.solar.layers.labels,
+                "planetAxes":self.solar.layers.axes,
                 "earthClouds":self.solar.surfaces.clouds,
                 "earthCityLights":self.solar.surfaces.lights,
                 "shadows":self.solar.surfaces.eclipse,
@@ -149,10 +152,13 @@ impl App {
             Some("apply") => {
                 match msg["kind"].as_u64() {
                     Some(kind @ (0 | 2 | 19 | 20 | 72..=78)) => self.time_action(kind, msg)?,
-                    Some(kind @ (29 | 69 | 70 | 79)) => {
+                    Some(kind @ (27..=30 | 69 | 70 | 79)) => {
                         let flag = msg["enabled"].as_bool().ok_or("真偽値が必要です")?;
                         match kind {
+                            27 => self.solar.layers.visible = flag,
+                            28 => self.solar.layers.labels = flag,
                             29 => self.solar.orbits = flag,
+                            30 => self.solar.layers.axes = flag,
                             69 => self.solar.surfaces.clouds = flag,
                             70 => self.solar.surfaces.lights = flag,
                             _ => self.solar.surfaces.eclipse = flag,
