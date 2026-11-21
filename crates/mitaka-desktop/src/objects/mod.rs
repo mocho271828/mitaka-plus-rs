@@ -1,6 +1,7 @@
 //! 出典ごとの行番号を保って天体を検索する。ヘッダ・欠測の有無はカタログごとに異なる。
 mod app;
 mod catalog;
+mod depth;
 pub(crate) mod display;
 pub(crate) mod horizon;
 mod layers;

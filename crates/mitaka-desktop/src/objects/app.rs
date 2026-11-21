@@ -114,6 +114,17 @@ impl App {
         let Some(sky) = &self.data else { return };
         let rect = self.canvas_rect;
         let click = self.picking.raw_pointer(ui, rect);
+        let Some(slot) = self.solar.object_pass else {
+            return;
+        };
+        let mut drawn = super::depth::DrawList::default();
+        let mut canvas = super::depth::Canvas {
+            painter: ui.painter(),
+            camera: self.solar.camera,
+            rect,
+            surface: &self.solar.surfaces,
+            out: &mut drawn,
+        };
         let mut hit = None;
         let mut nearest = f32::INFINITY;
         for kind in [
@@ -140,13 +151,17 @@ impl App {
             if !paths {
                 ui.painter().text(rect.left_top(),egui::Align2::LEFT_TOP,"軌道の標本数が上限を超えました。対象の絞り込み、または標本数の変更が必要です。",egui::FontId::proportional(12.),Color32::YELLOW);
             }
-            if let Some((i, d)) = scene.draw(ui.painter(), self.solar.camera, rect, click, paths) {
+            if let Some((i, d)) = scene.draw(&mut canvas, click, paths) {
                 if d < nearest {
                     nearest = d;
                     hit = Some((kind, i, c));
                 }
             }
         }
+        ui.painter()
+            .with_clip_rect(rect)
+            .set(slot, egui::Shape::Vec(drawn.back));
+        ui.painter().with_clip_rect(rect).extend(drawn.front);
         if let Some((kind, i, c)) = hit {
             self.objects
                 .select_scene(kind, i, c, self.picking == crate::viewer::Picking::Click);

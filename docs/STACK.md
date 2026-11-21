@@ -58,7 +58,7 @@
 | 50 | physical-terrain | ui・地表メッシュを物理カメラに統合 | 地形の交点深度、光源、視点に対する稜線の照合 | 550 | implemented |
 | 51 | horizon-transition | ui・地平図の離着陸と投影の引き継ぎ | 地上の姿勢と視野、切り替え開始・終了を照合 | 500 | implemented |
 | 52 | package-player | infra・各配布物のLuaと音声再生 | ネイティブデコーダーの再生・停止・シークを3 OSで検証 | 200 | implemented |
-| 53 | object-occlusion | ui・軌道・探査機の地形遮蔽 | 旧描画順と地表でのクリック対象を照合 | 300 | not-started |
+| 53 | object-occlusion | ui・軌道・探査機の地形遮蔽 | 旧描画順と地表でのクリック対象を照合 | 300 | implemented |
 | 54 | native-shortcuts | ui・従来のキー操作 | メニューとコマンドから同じ標準操作を実行 | 200 | not-started |
 | 55 | parity | contract・旧版機能と三OS配布の検証 | 機能別の対応実績、配布物と起動経路を検証 | 機能ごとに分割 | not-started |
 

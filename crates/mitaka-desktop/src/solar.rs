@@ -164,11 +164,18 @@ impl SolarCamera {
             [cp * cy, cp * sy, sp],
         ]
     }
+    pub(crate) fn near_plane(self) -> f64 {
+        if self.frame.is_some() && !self.frame_is_orbit {
+            1e-12
+        } else {
+            self.distance * 1e-4
+        }
+    }
     pub(crate) fn project(self, pos: Point, rect: Rect) -> Option<(Pos2, f64)> {
         let [right, up, out] = self.basis();
         let rel = self.relative_au(pos);
         let depth = self.distance - dot(rel, out);
-        if depth < self.distance * 0.0001 {
+        if depth < self.near_plane() {
             return None;
         }
         let factor = f64::from(rect.height()) / (2. * (self.fov * 0.5).to_radians().tan() * depth);
@@ -178,6 +185,41 @@ impl SolarCamera {
                 (-dot(rel, up) * factor) as f32,
             );
         xy.is_finite().then_some((xy, depth))
+    }
+    pub(crate) fn project_segment(
+        self,
+        a: Point,
+        b: Point,
+        rect: Rect,
+    ) -> Option<[(Pos2, f64); 2]> {
+        let [right, up, out] = self.basis();
+        let cam = |p| {
+            let d = self.relative_au(p);
+            glam::DVec3::new(dot(d, right), dot(d, up), self.distance - dot(d, out))
+        };
+        let (mut a, mut b) = (cam(a), cam(b));
+        let near = self.near_plane();
+        if a.z < near && b.z < near {
+            return None;
+        }
+        if (a.z < near) != (b.z < near) {
+            let mut cut = a.lerp(b, (near - a.z) / (b.z - a.z));
+            cut.z = near;
+            if a.z < near {
+                a = cut
+            } else {
+                b = cut
+            }
+        }
+        let focal = f64::from(rect.height()) / (2. * (self.fov * 0.5).to_radians().tan());
+        let px = |q: glam::DVec3| {
+            (
+                rect.center() + egui::vec2((q.x * focal / q.z) as f32, (-q.y * focal / q.z) as f32),
+                q.z,
+            )
+        };
+        let ends = [px(a), px(b)];
+        ends.iter().all(|(p, _)| p.is_finite()).then_some(ends)
     }
 }
 struct Flight {
@@ -216,6 +258,7 @@ pub struct Solar {
     pub(crate) horizon_overlay: Option<surface_flight::Overlay>,
     pub(crate) flight_site: Option<Site>,
     pub landed: Option<usize>,
+    pub(crate) object_pass: Option<egui::layers::ShapeIdx>,
     pub sky_selection: Option<sky::Selection>,
     pub sky_pick: Option<sky::Selection>,
 }
@@ -238,6 +281,7 @@ impl Default for Solar {
             flight_site: None,
             landed: None,
             sky_selection: None,
+            object_pass: None,
             sky_pick: None,
         }
     }
@@ -413,6 +457,7 @@ impl Solar {
         self.show_controls = open;
     }
     pub fn draw(&mut self, ui: &mut egui::Ui, settings: ViewSettings<'_>) -> io::Result<()> {
+        self.object_pass = None;
         let ViewSettings {
             data,
             jd,
@@ -593,6 +638,7 @@ impl Solar {
                 }
             }
         }
+        self.object_pass = Some(painter.add(egui::Shape::Noop));
         let mut visible: Vec<_> = scene
             .bodies
             .iter()
@@ -648,6 +694,13 @@ impl Solar {
                 )?;
             if self.layers.visible && !textured && !in_foreground {
                 painter.circle_filled(pos, radius, COLORS[i]);
+                let focal =
+                    f64::from(rect.height()) / (2. * (self.camera.fov * 0.5).to_radians().tan());
+                self.surfaces.symbol(
+                    pos,
+                    radius,
+                    depth * (f64::from(pos.distance(rect.center())) / focal).hypot(1.),
+                );
             }
             if i == self.selected {
                 painter.circle_stroke(pos, radius + 3., Stroke::new(1.0_f32, Color32::WHITE));
