@@ -542,6 +542,13 @@ end
 assert(not pcall(function() return Time.localYear end))
 Time:setJDTo(saved, 0, false)
 assert(Time.JD == saved)
+Camera.target='Satellite.Moon'
+Camera:forceMode(0); assert(Camera.mode==0)
+Camera:setAzimuthTo(28,0);Camera:setAltitudeTo(-9,0)
+assert(Camera.mode==0 and math.abs(Camera.azimuth-28)<1e-8 and math.abs(Camera.altitude+9)<1e-8)
+Camera:setModeTo(1,0);assert(Camera.mode==1)
+Camera:setModeTo(0,0);assert(Camera.mode==0)
+Camera:forceMode(1);assert(Camera.mode==1)
 Camera.target='Planet.Earth'
 assert(Camera.target=='Planet.Earth')
 Camera.duration=0

@@ -85,6 +85,26 @@ impl Surface {
             warning,
         })
     }
+    pub(crate) fn relocate(&mut self, lat: f64, lon: f64) -> io::Result<()> {
+        if self.lat == lat && self.lon == lon {
+            return Ok(());
+        }
+        let height = self.data.elevation_m(lon, lat)?;
+        let relief = Relief::build(
+            &mut self.data,
+            self.body,
+            lat,
+            lon,
+            self.span_km,
+            self.mode,
+            self.texture.as_ref(),
+        )?;
+        self.lat = lat;
+        self.lon = lon;
+        self.central_height = height;
+        self.relief = relief;
+        Ok(())
+    }
     pub fn set_mode(&mut self, mode: Amplification) -> io::Result<()> {
         if self.mode != mode {
             let relief = Relief::build(

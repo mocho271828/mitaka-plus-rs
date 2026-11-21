@@ -21,17 +21,27 @@ pub(super) const NAMES: [&str; 11] = [
 ];
 enum Object {
     Body(usize),
+    Place(super::places::Place),
     Hip(i32),
     Galaxy(super::galaxy_targets::Target),
     Direction([f64; 2]),
     Catalog(Box<ScriptTarget>),
 }
 impl Object {
+    fn radius(&self) -> Option<f64> {
+        match self {
+            Self::Body(i) => Some(Solar::body_distance(*i) / 6.),
+            Self::Place(p) => Some(Solar::body_distance(p.body) / 6.),
+            Self::Galaxy(g) => g.radius,
+            _ => None,
+        }
+    }
     fn location(&self, sky: &SkyData, solar: &Solar, jd: f64) -> io::Result<[f64; 3]> {
         match self {
             Self::Body(id) => solar
                 .body_point(*id)
                 .ok_or_else(|| io::Error::other("太陽系の位置がありません")),
+            Self::Place(p) => p.position(solar, jd),
             Self::Galaxy(target) => Ok(target.pos),
             Self::Direction(_) => Err(io::Error::other("この対象には方向のみ指定されています")),
             Self::Hip(hip) => {
@@ -55,6 +65,42 @@ impl Object {
             .data
             .as_ref()
             .ok_or_else(|| io::Error::other("天文データがありません"))?;
+        if let Some(site) = app
+            .motion
+            .site
+            .filter(|s| app.view == View::Solar && s.height <= 0.002000001)
+        {
+            let local = super::orientation::body_site(site.body, site.lat, site.lon, app.jd)?;
+            let dir = match self {
+                Self::Hip(hip) => {
+                    let s = &sky.stars[sky.by_hip[hip]];
+                    Some([s.ra_deg.into(), s.dec_deg.into()])
+                }
+                Self::Direction(p) => Some(*p),
+                _ => None,
+            };
+            let ray = if let Some([ra, dec]) = dir {
+                DVec3::from_array(j2000_equatorial_to_ecliptic(equatorial_direction(
+                    ra, dec,
+                )?)?)
+            } else {
+                let c = app.solar.camera;
+                DVec3::from_array(self.location(sky, &app.solar, app.jd)?)
+                    - (DVec3::from_array(c.target) + DVec3::from_array(c.basis()[2]) * c.distance)
+            };
+            let unit = ray
+                .try_normalize()
+                .ok_or_else(|| io::Error::other("観測地点と対象が一致しています"))?;
+            let (east, north) = (unit.dot(local.x_axis), unit.dot(-local.z_axis));
+            return Ok([
+                if east.hypot(north) > 1e-12 {
+                    east.atan2(north).to_degrees().rem_euclid(360.)
+                } else {
+                    site.heading
+                },
+                unit.dot(local.y_axis).clamp(-1., 1.).asin().to_degrees(),
+            ]);
+        }
         let eq = if let Self::Direction(coords) = self {
             *coords
         } else if let Self::Hip(hip) = self {
@@ -76,6 +122,8 @@ impl Object {
 pub(super) struct Tracking {
     pub name: String,
     marker: Option<[f64; 3]>,
+    orientation: glam::DQuat,
+    look: bool,
     object: Object,
     view: View,
     time: Interval,
@@ -104,18 +152,35 @@ impl Tracking {
                 .as_ref()
                 .ok_or_else(|| io::Error::other("天文データがありません"))?;
             app.solar.prepare(&data.ephemeris, app.jd)?;
-            if self.view == View::Solar {
+            if !self.look {
                 let p = self.object.location(data, &app.solar, app.jd)?;
                 self.marker = Some(p);
+                if let Object::Place(place) = self.object {
+                    super::orientation::apply_solar(
+                        &mut app.solar.camera,
+                        self.orientation.slerp(place.orbit_orientation(app.jd)?, t),
+                    );
+                }
+
                 app.solar.camera.target = DVec3::from_array(self.from).lerp(p.into(), t).to_array();
                 if self.last.is_none() {
                     app.solar.camera.distance = self.dist[0] * (1. - t) + self.dist[1] * t;
                 }
             } else {
                 let [az, alt] = self.object.horizontal(app)?;
-                app.horizon.longitude =
-                    (self.aim[0] + signed(az - self.aim[0]) * t).rem_euclid(360.);
-                app.horizon.latitude = self.aim[1] * (1. - t) + alt * t;
+                let a = (self.aim[0] + signed(az - self.aim[0]) * t).rem_euclid(360.);
+                let e = self.aim[1] * (1. - t) + alt * t;
+                if let Some(site) = app.motion.site.as_mut().filter(|_| app.view == View::Solar) {
+                    site.heading = a;
+                    site.elevation = e;
+                    site.last = None;
+                    if let Some(center) = app.solar.body_point(site.body) {
+                        site.pose(center.into(), app.jd, &mut app.solar.camera)?;
+                    }
+                } else {
+                    app.horizon.longitude = a;
+                    app.horizon.latitude = e;
+                }
             }
             Ok(())
         };
@@ -137,10 +202,22 @@ impl App {
         time: Interval,
     ) -> Result<(), String> {
         let sky = self.data.as_ref().ok_or("天文データがありません")?;
+        let place = super::places::Place::find(name, sky).map_err(|e| e.to_string())?;
+        if let Some(p) = place {
+            if look {
+                return Err("場所を視線対象として指定できません".into());
+            }
+            if self.local_place(name, p, time)? {
+                return Ok(());
+            }
+        }
+        let sky = self.data.as_ref().ok_or("天文データがありません")?;
         self.solar
             .prepare(&sky.ephemeris, self.jd)
             .map_err(|e| e.to_string())?;
-        let object = if let Some(id) = NAMES.iter().position(|u| *u == name) {
+        let object = if let Some(p) = place {
+            Object::Place(p)
+        } else if let Some(id) = NAMES.iter().position(|u| *u == name) {
             Object::Body(id)
         } else if name.starts_with("Other.")
             || name.starts_with("Galaxy.")
@@ -192,34 +269,57 @@ impl App {
         if !look {
             self.solar.stop();
             self.motion.site = None;
+            let previous = match self
+                .motion
+                .target
+                .as_ref()
+                .filter(|v| v.view == View::Solar)
+            {
+                Some(track) => track.object.radius(),
+                None => Some(Solar::body_distance(self.solar.selected) / 6.),
+            };
+            if let Some(r) = object.radius().filter(|r| {
+                self.motion.zoom_mode == 2
+                    || self.motion.zoom_mode == 1 && previous.is_some_and(|prev| *r > prev)
+            }) {
+                dest = (9. * r).clamp(5e-6, 648000. / std::f64::consts::PI * 1e40);
+            }
             if let Object::Body(id) = object {
-                let prev = Solar::body_distance(self.solar.selected);
-                let next = Solar::body_distance(id);
-                if self.motion.zoom_mode == 2 || self.motion.zoom_mode == 1 && next > prev {
-                    dest = (next * 1.5).max(0.000005);
-                }
                 self.solar.selected = id;
             }
-            if let Object::Galaxy(t) = object {
-                if let Some(r) = t.radius.filter(|r| {
-                    self.motion.zoom_mode == 2
-                        || self.motion.zoom_mode == 1
-                            && *r > Solar::body_distance(self.solar.selected) / 6.
-                }) {
-                    dest = 9. * r;
+            if let Object::Place(p) = object {
+                self.solar.selected = p.body;
+                if p.body == 3 {
+                    self.latitude = p.lat;
+                    self.longitude = p.lon;
+                    self.options.layers.observer = name.as_bytes().to_vec();
                 }
             }
             if let Object::Hip(id) = object {
                 self.selected = Some(id);
             }
         }
-        self.view = if look { View::Horizon } else { View::Solar };
+        self.motion.place = None;
+        self.motion.place_name = None;
+        self.motion.physical_flight = None;
+        self.motion.free_physical = false;
+        let ground = self
+            .motion
+            .site
+            .filter(|s| self.view == View::Solar && s.height <= 0.002000001);
+        self.view = if look && ground.is_none() {
+            View::Horizon
+        } else {
+            View::Solar
+        };
         self.motion.az = None;
         self.motion.alt = None;
         self.motion.turn = None;
         self.motion.target = Some(Tracking {
             name: name.to_owned(),
             marker: None,
+            look,
+            orientation: super::orientation::solar(self.solar.camera),
             object,
             view: self.view,
             time: Interval {
@@ -228,7 +328,9 @@ impl App {
             },
             from,
             dist: [d, dest],
-            aim: [self.horizon.longitude, self.horizon.latitude],
+            aim: ground.map_or([self.horizon.longitude, self.horizon.latitude], |s| {
+                [s.heading, s.elevation]
+            }),
             last: None,
             follow: !look || time.smooth,
         });
@@ -239,11 +341,10 @@ impl App {
 impl App {
     pub(crate) fn script_marker(&self, ui: &eframe::egui::Ui) {
         use eframe::egui::{self, Align2, Color32, Stroke};
-        let Some(track) = self
-            .motion
-            .target
-            .as_ref()
-            .filter(|t| t.view == View::Solar && !matches!(t.object, Object::Body(_)))
+        let Some(track) =
+            self.motion.target.as_ref().filter(|t| {
+                !t.look && t.view == View::Solar && !matches!(t.object, Object::Body(_))
+            })
         else {
             return;
         };

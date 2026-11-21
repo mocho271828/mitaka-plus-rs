@@ -17,7 +17,7 @@ pub(crate) struct Site {
     pub elevation: f64,
     pub roll: f64,
     pub terrain: f64,
-    last: Option<f64>,
+    pub(super) last: Option<f64>,
 }
 impl Site {
     pub(crate) fn decode(v: &Value) -> io::Result<Option<Self>> {
@@ -53,7 +53,12 @@ impl Site {
             last: None,
         }
     }
-    fn pose(&self, center: DVec3, jd: f64, c: &mut crate::solar::SolarCamera) -> io::Result<()> {
+    pub(crate) fn pose(
+        &self,
+        center: DVec3,
+        jd: f64,
+        c: &mut crate::solar::SolarCamera,
+    ) -> io::Result<()> {
         let local = orientation::body_site(self.body, self.lat, self.lon, jd)?;
         let q = orientation::horizon(
             Camera {
@@ -75,7 +80,7 @@ impl Site {
         c.frame_is_orbit = false;
         Ok(())
     }
-    fn value(self) -> Value {
+    pub(super) fn value(self) -> Value {
         json!({"body_index":self.body,"latitude_deg":self.lat,"longitude_deg":self.lon,"height_km":self.height,"heading_deg":self.heading,"elevation_deg":self.elevation,"roll_deg":self.roll,"terrain_offset_km":self.terrain})
     }
     pub(super) fn advance(&mut self, app: &mut App) -> io::Result<()> {
@@ -115,7 +120,9 @@ impl App {
             site.pose(center.into(), self.jd, &mut c)?;
             Some(site)
         } else {
-            self.motion.site.filter(|_| self.view == View::Solar)
+            self.motion
+                .site
+                .filter(|s| self.view == View::Solar && (s.body == 3 || s.height <= 0.002000001))
         };
 
         let frame = c
@@ -127,6 +134,9 @@ impl App {
             solar["physical_space"] = json!(s.height > 0.002000001);
         } else {
             v.as_object_mut().unwrap().remove("surface_site");
+            if self.motion.free_physical || self.motion.physical_flight.is_some() {
+                solar["physical_space"] = json!(true);
+            }
         }
         if let Some(anchor) = v["solar_camera"].get("precise_target") {
             if v["solar_camera"]["target"] == solar["target"] {
@@ -139,6 +149,7 @@ impl App {
     pub(crate) fn camera_extras_after_restore(&mut self, c: &Value, site: Option<Site>) {
         self.motion = Default::default();
         self.motion.site = site;
+        self.motion.free_physical = site.is_none() && c["physical_space"].as_bool() == Some(true);
         self.solar.camera.frame = if c["frame"].is_null() {
             None
         } else {
