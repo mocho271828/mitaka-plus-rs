@@ -87,6 +87,7 @@ impl App {
             kind: self.objects.kind,
             active: self.objects.active,
             options: &self.objects.options,
+            selections: &self.objects.selections,
             sky,
             jd: self.jd,
         };

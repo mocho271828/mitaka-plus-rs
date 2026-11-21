@@ -2614,6 +2614,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "command-group",
+ "dirs",
  "eframe",
  "encoding_rs",
  "fontdb",

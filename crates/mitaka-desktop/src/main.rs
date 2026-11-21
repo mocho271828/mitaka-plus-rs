@@ -196,6 +196,11 @@ impl App {
             Command::RunScript => self.script_file(ctx),
             Command::ScriptPanel => self.scripts.panel = true,
             Command::LocalHtml => self.open_script_html(),
+            Command::RememberState | Command::RecallState => {
+                if let Err(e) = self.remembered_session(command == Command::RememberState) {
+                    self.error = Some(e.to_string());
+                }
+            }
             Command::LoadState => self.session_dialog(false),
             Command::SaveState => self.session_dialog(true),
             Command::Sky => self.view = View::Sky,

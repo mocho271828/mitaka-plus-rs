@@ -47,6 +47,7 @@ pub(super) struct Overlay<'a> {
     pub catalog: &'a Catalog,
     pub kind: Kind,
     pub active: Option<usize>,
+    pub selections: &'a super::selections::Selections,
     pub options: &'a Options,
     pub sky: &'a SkyData,
     pub jd: f64,
@@ -75,7 +76,11 @@ impl Overlay<'_> {
         };
         let path_color = Color32::from_rgba_unmultiplied(163, 214, 250, 89);
         for i in 0..self.catalog.len() {
-            if self.kind == Kind::Small && self.active != Some(i) {
+            let selected = self
+                .catalog
+                .identity(i)
+                .is_some_and(|(src, ordinal)| self.selections.contains(self.kind, src, ordinal));
+            if self.kind == Kind::Small && self.active != Some(i) && !selected {
                 continue;
             }
             let Ok(Position::Solar(p, _)) = self.catalog.locate(i, self.sky, self.jd) else {
@@ -91,16 +96,24 @@ impl Overlay<'_> {
             if self.options.points || self.options.labels {
                 if let Some((pt, d)) = camera.project(p, rect).filter(|(pt, _)| rect.contains(*pt))
                 {
-                    visible.push((i, pt, d));
+                    visible.push((i, pt, d, selected));
                 }
             }
         }
         visible.sort_by(|a, b| b.2.total_cmp(&a.2));
         let mut nearest = 8.0;
         let mut hit = None;
-        for (i, p, _) in visible {
+        for (i, p, _, selected) in visible {
             if self.options.points {
-                paint.circle_filled(p, if self.active == Some(i) { 3. } else { 1.7 }, color);
+                paint.circle_filled(
+                    p,
+                    if self.active == Some(i) || selected {
+                        3.
+                    } else {
+                        1.7
+                    },
+                    color,
+                );
                 if self.active == Some(i) {
                     paint.circle_stroke(p, 7., Stroke::new(1.5_f32, Color32::GOLD));
                 }
