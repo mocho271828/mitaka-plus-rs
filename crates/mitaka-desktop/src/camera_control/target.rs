@@ -22,6 +22,8 @@ pub(super) const NAMES: [&str; 11] = [
 enum Object {
     Body(usize),
     Hip(i32),
+    Galaxy(super::galaxy_targets::Target),
+    Direction([f64; 2]),
     Catalog(Box<ScriptTarget>),
 }
 impl Object {
@@ -30,6 +32,8 @@ impl Object {
             Self::Body(id) => solar
                 .body_point(*id)
                 .ok_or_else(|| io::Error::other("太陽系の位置がありません")),
+            Self::Galaxy(target) => Ok(target.pos),
+            Self::Direction(_) => Err(io::Error::other("この対象には方向のみ指定されています")),
             Self::Hip(hip) => {
                 let s = &sky.stars[sky.by_hip[hip]];
                 if !s.parallax_mas.is_finite() || s.parallax_mas <= 0. {
@@ -51,7 +55,9 @@ impl Object {
             .data
             .as_ref()
             .ok_or_else(|| io::Error::other("天文データがありません"))?;
-        let eq = if let Self::Hip(hip) = self {
+        let eq = if let Self::Direction(coords) = self {
+            *coords
+        } else if let Self::Hip(hip) = self {
             let s = &sky.stars[sky.by_hip[hip]];
             [s.ra_deg.into(), s.dec_deg.into()]
         } else {
@@ -69,6 +75,7 @@ impl Object {
 }
 pub(super) struct Tracking {
     pub name: String,
+    marker: Option<[f64; 3]>,
     object: Object,
     view: View,
     time: Interval,
@@ -99,6 +106,7 @@ impl Tracking {
             app.solar.prepare(&data.ephemeris, app.jd)?;
             if self.view == View::Solar {
                 let p = self.object.location(data, &app.solar, app.jd)?;
+                self.marker = Some(p);
                 app.solar.camera.target = DVec3::from_array(self.from).lerp(p.into(), t).to_array();
                 if self.last.is_none() {
                     app.solar.camera.distance = self.dist[0] * (1. - t) + self.dist[1] * t;
@@ -134,6 +142,21 @@ impl App {
             .map_err(|e| e.to_string())?;
         let object = if let Some(id) = NAMES.iter().position(|u| *u == name) {
             Object::Body(id)
+        } else if name.starts_with("Other.")
+            || name.starts_with("Galaxy.")
+            || name.starts_with("GC.")
+        {
+            Object::Galaxy(super::galaxy_targets::resolve(name, sky).map_err(|e| e.to_string())?)
+        } else if let Some(key) = name.strip_prefix("Constel.") {
+            let mut hits = sky
+                .constellations
+                .iter()
+                .filter(|c| c.english_name == key.as_bytes() || c.abbreviation == key.as_bytes());
+            let target = hits.next().ok_or("星座がありません")?;
+            if hits.next().is_some() {
+                return Err("同名の星座が複数あります".into());
+            }
+            Object::Direction([target.ra_deg.into(), target.dec_deg.into()])
         } else if let Some(id) = name.strip_prefix("Star.") {
             let hip = if let Ok(hip) = id.parse::<i32>() {
                 hip
@@ -177,6 +200,15 @@ impl App {
                 }
                 self.solar.selected = id;
             }
+            if let Object::Galaxy(t) = object {
+                if let Some(r) = t.radius.filter(|r| {
+                    self.motion.zoom_mode == 2
+                        || self.motion.zoom_mode == 1
+                            && *r > Solar::body_distance(self.solar.selected) / 6.
+                }) {
+                    dest = 9. * r;
+                }
+            }
             if let Object::Hip(id) = object {
                 self.selected = Some(id);
             }
@@ -187,6 +219,7 @@ impl App {
         self.motion.turn = None;
         self.motion.target = Some(Tracking {
             name: name.to_owned(),
+            marker: None,
             object,
             view: self.view,
             time: Interval {
@@ -200,5 +233,35 @@ impl App {
             follow: !look || time.smooth,
         });
         Ok(())
+    }
+}
+
+impl App {
+    pub(crate) fn script_marker(&self, ui: &eframe::egui::Ui) {
+        use eframe::egui::{self, Align2, Color32, Stroke};
+        let Some(track) = self
+            .motion
+            .target
+            .as_ref()
+            .filter(|t| t.view == View::Solar && !matches!(t.object, Object::Body(_)))
+        else {
+            return;
+        };
+        let Some((p, _)) = track
+            .marker
+            .and_then(|p| self.solar.camera.project(p, self.canvas_rect))
+            .filter(|(p, _)| self.canvas_rect.contains(*p))
+        else {
+            return;
+        };
+        ui.painter()
+            .circle_stroke(p, 7., Stroke::new(1.5_f32, Color32::GOLD));
+        ui.painter().text(
+            p + egui::vec2(10., 7.),
+            Align2::LEFT_TOP,
+            &track.name,
+            egui::FontId::proportional(12.),
+            Color32::GOLD,
+        );
     }
 }

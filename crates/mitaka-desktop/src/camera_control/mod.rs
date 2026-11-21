@@ -1,3 +1,4 @@
+mod galaxy_targets;
 mod orientation;
 pub(crate) mod session;
 mod target;

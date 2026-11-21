@@ -648,6 +648,7 @@ impl App {
                 ui.label(e.to_string());
             }
             self.object_in_solar(ui);
+            self.script_marker(ui);
             return;
         }
         if self.view == View::Surface {
