@@ -123,7 +123,11 @@ Images.index=1
 Movies:pause()
 GUI.soundControler=true
 assert(not pcall(function() Images.playing=true end))
-print(Camera.target)
+print("", Camera.target, "")
+print(string.rep("星", 2731))
+print(string.rep("x", 8190), "🪐")
+print(string.rep("x", 8191) .. string.char(0xe3, 0x81))
+print(string.char(255))
 Time:stop()
 Camera:setZoomLogTo(4*UNIT_AU)
 Camera:setEulerTo(10,20,30,0.5,false)
@@ -157,7 +161,7 @@ assert(not pcall(function() Planets:toggleAtmosphere(1) end))
     let mut child = mitaka_script::spawn_helper(Path::new(EXE), &file, Some(&endpoint)).unwrap();
     let mut socket = listener.accept().unwrap();
     let mut actions = Vec::new();
-    let mut saw_log = false;
+    let mut logs = Vec::new();
     let mut atmosphere = 2;
     loop {
         let mut header = [0; 4];
@@ -180,8 +184,7 @@ assert(not pcall(function() Planets:toggleAtmosphere(1) end))
                 json!({"ok":true})
             }
             "log" => {
-                assert_eq!(msg["text"], "Planet.Earth");
-                saw_log = true;
+                logs.push(msg["text"].as_str().unwrap().to_owned());
                 json!({"ok":true})
             }
             "done" => {
@@ -229,5 +232,14 @@ assert(not pcall(function() Planets:toggleAtmosphere(1) end))
     assert_eq!(actions[1]["kind"], 8);
     assert_eq!(actions[1]["enabled"], true);
     assert_eq!(actions[2]["kind"], 2);
-    assert!(saw_log);
+    assert_eq!(
+        logs,
+        [
+            "\tPlanet.Earth\t".to_owned(),
+            "星".repeat(2730),
+            format!("{}\t", "x".repeat(8190)),
+            "[non-UTF-8 output]".to_owned(),
+            "[non-UTF-8 output]".to_owned(),
+        ]
+    );
 }

@@ -12,6 +12,9 @@ use std::{
 };
 
 const FRAME_LIMIT: usize = 65_536;
+const LOG_LIMIT: usize = 8192;
+// 上限をまたぐUTF-8文字が元のログで完結しているか、最大3バイト先まで確認する。
+const LOG_LOOKAHEAD_LIMIT: usize = LOG_LIMIT + 3;
 pub type SharedHost = Rc<RefCell<Stream>>;
 
 pub fn connect(endpoint: &OsStr) -> io::Result<SharedHost> {
@@ -277,13 +280,14 @@ pub fn install(lua: &Lua, host: Option<&SharedHost>) -> mlua::Result<()> {
         "print",
         lua.create_function(move |_, values: MultiValue| {
             let mut output = Vec::new();
-            for value in values {
-                if !output.is_empty() {
+            for (index, value) in values.into_iter().enumerate() {
+                if index != 0 {
                     output.push(b'\t');
                 }
                 if let LuaValue::String(v) = &value {
                     let bytes = v.as_bytes();
-                    output.extend_from_slice(&bytes[..bytes.len().min(8192)]);
+                    let remaining = LOG_LOOKAHEAD_LIMIT - output.len();
+                    output.extend_from_slice(&bytes[..bytes.len().min(remaining)]);
                 } else {
                     let text = match value {
                         LuaValue::Number(v) => format!("{v:.6}"),
@@ -293,12 +297,21 @@ pub fn install(lua: &Lua, host: Option<&SharedHost>) -> mlua::Result<()> {
                     };
                     output.extend_from_slice(text.as_bytes());
                 }
-                if output.len() >= 8192 {
-                    output.truncate(8192);
+                if output.len() >= LOG_LOOKAHEAD_LIMIT {
+                    output.truncate(LOG_LOOKAHEAD_LIMIT);
                     break;
                 }
             }
-            let text = std::str::from_utf8(&output).unwrap_or("[non-UTF-8 output]");
+            let end = output.len().min(LOG_LIMIT);
+            let valid = output
+                .utf8_chunks()
+                .next()
+                .map_or("", |chunk| chunk.valid());
+            let text = if valid.len() >= end {
+                &valid[..valid.floor_char_boundary(end)]
+            } else {
+                "[non-UTF-8 output]"
+            };
             request(&host, json!({"op":"log","text":text}))?;
             Ok(())
         })?,
