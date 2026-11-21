@@ -6,4 +6,6 @@
 - [共有実装とOS境界](policy_gates/platform.md)
 - [ビルドと検証](policy_gates/testing.md)
 
+配布ごとに3 OSの展開済み実行ファイルを検査する。比較範囲と実機・CIの検証条件は [移植範囲と検証](docs/COMPATIBILITY.md) に記録する。
+
 レビュー時には3ファイルを temp_gates/YYYY-MM-DD-HH-MM-SS にコピーし、実際に検証した条件と結果を記入する。
