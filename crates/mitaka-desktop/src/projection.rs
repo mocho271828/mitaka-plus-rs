@@ -45,7 +45,7 @@ impl Camera {
             let right = cosine * sd;
             let up = sine * ct - cosine * cd * st;
             let (sr, cr) = self.roll.to_radians().sin_cos();
-            let (right, up) = (right * cr - up * sr, up * cr + right * sr);
+            let (right, up) = (right * cr + up * sr, up * cr - right * sr);
             (
                 right.atan2(forward).to_degrees(),
                 up.atan2(forward.hypot(right)).to_degrees(),
@@ -175,6 +175,23 @@ mod tests {
             camera.position(View::Horizon, [90., 90.]),
             [0.5, 0.5 - 20. / 180.],
         );
+    }
+    #[test]
+    fn rolled_horizon_matches_plus_raster_pixel_centers() {
+        let c = Camera {
+            longitude: 279.,
+            latitude: -15.,
+            roll: 33.,
+            zoom: 180. / 70.,
+        };
+        // HorizonRasterProjectionの9×5画素レンダーにおける画素中心の方位・高度。
+        for (ax, ay, x, y) in [
+            (212.13943087444915, -7.883517074461757, 0.5, 0.5),
+            (312.2416050357693, 43.218892388640114, 8.5, 0.5),
+            (344.992431004655, -4.34973794127603, 8.5, 4.5),
+        ] {
+            near(c.position(View::Horizon, [ax, ay]), [x / 9., y / 5.]);
+        }
     }
     #[test]
     fn sky_zoom_preserves_mouse_anchor_and_wraps_longitude() {
