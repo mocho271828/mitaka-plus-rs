@@ -119,6 +119,10 @@ assert(not pcall(function() Time.JD = "1" end))
 Time.JD = 2451546
 Stars:toggleLabels()
 print("", Camera.target, "")
+print(string.rep("星", 2731))
+print(string.rep("x", 8190), "🪐")
+print(string.rep("x", 8191) .. string.char(0xe3, 0x81))
+print(string.char(255))
 Time:stop()
 "#,
     )
@@ -141,7 +145,7 @@ Time:stop()
     let mut child = mitaka_script::spawn_helper(Path::new(EXE), &file, Some(&endpoint)).unwrap();
     let mut socket = listener.accept().unwrap();
     let mut actions = Vec::new();
-    let mut saw_log = false;
+    let mut logs = Vec::new();
     loop {
         let mut header = [0; 4];
         socket.read_exact(&mut header).unwrap();
@@ -159,8 +163,7 @@ Time:stop()
                 json!({"ok":true})
             }
             "log" => {
-                assert_eq!(msg["text"], "\tPlanet.Earth\t");
-                saw_log = true;
+                logs.push(msg["text"].as_str().unwrap().to_owned());
                 json!({"ok":true})
             }
             "done" => {
@@ -183,5 +186,14 @@ Time:stop()
     assert_eq!(actions[1]["kind"], 8);
     assert_eq!(actions[1]["enabled"], true);
     assert_eq!(actions[2]["kind"], 2);
-    assert!(saw_log);
+    assert_eq!(
+        logs,
+        [
+            "\tPlanet.Earth\t".to_owned(),
+            "星".repeat(2730),
+            format!("{}\t", "x".repeat(8190)),
+            "[non-UTF-8 output]".to_owned(),
+            "[non-UTF-8 output]".to_owned(),
+        ]
+    );
 }
