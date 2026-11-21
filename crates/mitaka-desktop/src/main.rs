@@ -80,6 +80,7 @@ impl Args {
 }
 struct App {
     motion: camera_control::State,
+    terrain_amplification: mitaka_core::terrain::Amplification,
     landscape_render: layers::landscape::LandscapeRenderer,
     projector: projector::Projector,
     media: media_preview::Media,
@@ -122,6 +123,7 @@ impl App {
         fonts::install(&cc.egui_ctx);
         let menus = Menus::new(cc)?;
         Ok(Self {
+            terrain_amplification: Default::default(),
             data: initial,
             motion: Default::default(),
             landscape_render: Default::default(),
@@ -155,6 +157,16 @@ impl App {
             utc: "2000-01-01 12:00:00".into(),
             smoke,
         })
+    }
+    fn set_terrain_mode(
+        &mut self,
+        mode: mitaka_core::terrain::Amplification,
+    ) -> std::io::Result<()> {
+        if let Some(surface) = &mut self.surface {
+            surface.set_mode(mode)?;
+        }
+        self.terrain_amplification = mode;
+        Ok(())
     }
     fn camera(&mut self) -> &mut Camera {
         if self.view == View::Sky {
@@ -264,13 +276,20 @@ impl App {
                             "地形の離着陸は地球と火星で利用できます",
                         ));
                     }
-                    let ground = surface::Surface::load(&data.root, body, lat, lon, 100.)?;
+                    let ground = surface::Surface::load_mode(
+                        &data.root,
+                        body,
+                        lat,
+                        lon,
+                        100.,
+                        self.terrain_amplification,
+                    )?;
                     self.solar.prepare(&data.ephemeris, self.jd)?;
                     self.solar.begin_surface_flight(
                         body,
                         lat,
                         lon,
-                        ground.central_height,
+                        ground.landing_height_m(solar::RADII_KM[body]),
                         self.jd,
                         ascend,
                     )?;
@@ -300,8 +319,14 @@ impl App {
                 } else {
                     3
                 };
-                match surface::Surface::load(&data.root, body, self.latitude, self.longitude, 100.)
-                {
+                match surface::Surface::load_mode(
+                    &data.root,
+                    body,
+                    self.latitude,
+                    self.longitude,
+                    100.,
+                    self.terrain_amplification,
+                ) {
                     Ok(surface) => {
                         self.surface = Some(surface);
                         self.view = View::Surface;
@@ -477,6 +502,17 @@ impl App {
                 ui.separator();
                 self.clock_controls(ui);
                 self.solar.layers.panel(ui);
+                let mut mode = self.terrain_amplification;
+                egui::ComboBox::from_label("地形の起伏倍率")
+                    .selected_text(format!("×{}", mode.factor()))
+                    .show_ui(ui, |ui| {
+                        for value in mitaka_core::terrain::Amplification::ALL {
+                            ui.selectable_value(&mut mode, value, format!("×{}", value.factor()));
+                        }
+                    });
+                if let Err(e) = self.set_terrain_mode(mode) {
+                    self.error = Some(e.to_string());
+                }
                 let lat_changed = ui
                     .add(egui::Slider::new(&mut self.latitude, -90. ..=90.).text("緯度 °"))
                     .changed();
@@ -586,7 +622,9 @@ impl App {
         }
         if self.view == View::Surface {
             if let Some(surface) = &mut self.surface {
-                surface.draw(ui);
+                if let Some(data) = &self.data {
+                    surface.draw(ui, &data.ephemeris, self.jd);
+                }
             }
             return;
         }

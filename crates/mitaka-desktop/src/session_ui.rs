@@ -95,6 +95,7 @@ impl App {
         {
             v["radius_display"][key] = json!(scale);
         }
+        v["terrain_amplification"] = json!(self.terrain_amplification.stage());
         let surface = &self.solar.surfaces;
         v["earth_layers"] = json!({"clouds":surface.clouds,"city_lights":surface.lights});
         v["eclipse"]["shadows"] = json!(surface.eclipse);
@@ -137,6 +138,11 @@ impl App {
         self.objects.selections = selections;
         self.scripts.cancel();
         self.options.layers = layers;
+        self.terrain_amplification = mitaka_core::terrain::Amplification::from_stage(
+            v["terrain_amplification"]
+                .as_u64()
+                .ok_or_else(|| io::Error::other("地形倍率段階が不正です"))?,
+        )?;
         self.solar.stop();
         self.set_date(jd);
         self.camera_extras_after_restore(camera, restored_site);

@@ -38,10 +38,10 @@
 | 30 | portable-verification | infra・配布物のオフライン起動と3 OS検証 | 実行ファイルから合成カタログを読み、Linux両表示系で描画 | 450 | implemented |
 | 31 | planet-layers | ui・地心惑星の選択と表示レイヤー | 同時刻の赤経赤緯、模式半径、自転軸、選択を照合 | 650 | implemented |
 | 32 | camera-controls | ui・カメラの操作とLua | 手動操作と時刻補間、投影と復元を検証 | 900 | implemented |
-| 33 | terrain-display | ui・地形タイルと倍率 | 元標高と地形倍率を旧版で照合 | 650 | not-started |
-| 34 | registered-media | adapter・登録メディアと制御 | 旧登録名と順序、ローカルメディアを比較 | 900 | not-started |
-| 35 | milky-way | ui・全天・地平図の銀河背景 | 元の写真・銀河座標と遮蔽、表示設定を検証 | 450 | not-started |
-| 36 | script-calendar | adapter・旧LuaのUTC・地方時と日時補間 | 日時の繰越、時差・実Luaの往復、補間終端 | 450 | not-started |
+| 33 | terrain-display | ui・地形タイルと倍率 | 元標高と地形倍率を旧版で照合 | 650 | implemented |
+| 34 | script-calendar | adapter・旧LuaのUTC・地方時と日時補間 | 日時の繰越、時差・実Luaの往復、補間終端 | 450 | not-started |
+| 35 | registered-media | adapter・登録メディアと制御 | 旧登録名と順序、ローカルメディアを比較 | 900 | not-started |
+| 36 | milky-way | ui・全天・地平図の銀河背景 | 元の写真・銀河座標と遮蔽、表示設定を検証 | 450 | not-started |
 | 37 | parity | contract・旧版機能と三OS配布の検証 | 機能別の対応実績、配布物と起動経路を検証 | 機能ごとに分割 | not-started |
 
 差分が複数のレビュー理由を持つ場合はその単位を分割する。親が変わる場合は先に表を修正し、レビュー指摘は責務を持つ親で直す。CI結果・実機結果・未実装項目を区別する。下位PRから順にレビューし、全機能の実装と検証が揃った時点でマージ作業へ引き継ぐ。

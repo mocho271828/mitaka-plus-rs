@@ -49,7 +49,7 @@ impl Site {
             heading: horizon.longitude,
             elevation: horizon.latitude,
             roll: horizon.roll,
-            terrain: s.central_height / 1000.,
+            terrain: s.landing_height_m(crate::solar::RADII_KM[s.body]) / 1000.,
             last: None,
         }
     }
