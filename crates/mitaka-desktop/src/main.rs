@@ -298,7 +298,7 @@ impl App {
                     } else {
                         1. / 1.5
                     };
-                    self.camera().zoom_at(view, factor, [0.5, 0.5]);
+                    self.zoom_chart_at(factor, [0.5, 0.5]);
                 }
             }
             Command::Open => self.open(),
