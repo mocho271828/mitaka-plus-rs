@@ -94,6 +94,10 @@ pub(crate) struct Browser {
     pub(crate) display: display::Display,
 }
 impl Browser {
+    pub(crate) fn stop_tracking(&mut self) {
+        self.follow = false;
+    }
+
     fn load(&mut self, root: PathBuf, ctx: &egui::Context) {
         self.root = Some(root.clone());
         self.data = None;

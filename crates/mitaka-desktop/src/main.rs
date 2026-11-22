@@ -407,7 +407,10 @@ impl App {
             }
             Command::Info if self.view == View::Solar => self.solar.show_controls = true,
             Command::Info => self.info = true,
-            Command::Reset if self.view == View::Solar => self.solar = Default::default(),
+            Command::Reset if self.view == View::Solar => {
+                self.motion.reset_solar_camera(&mut self.solar);
+                self.objects.stop_tracking();
+            }
             Command::Reset if self.view == View::Surface => self.view = View::Solar,
             Command::Reset => *self.camera() = Camera::default(),
         }
@@ -739,10 +742,9 @@ impl App {
             return;
         }
         let view = self.view;
-        let camera = self.camera();
         if response.dragged() {
             let delta = response.drag_delta();
-            camera.pan(
+            self.camera().pan(
                 view,
                 f64::from(delta.x / rect.width()),
                 f64::from(delta.y / rect.height()),
@@ -752,8 +754,7 @@ impl App {
             let factor = ui
                 .input(|i| (i.smooth_scroll_delta.y * 0.008).clamp(-2., 2.).exp() * i.zoom_delta());
             if (factor - 1.).abs() > 1e-6 {
-                camera.zoom_at(
-                    view,
+                self.zoom_chart_at(
                     factor.into(),
                     [
                         f64::from((mouse.x - rect.left()) / rect.width()),
@@ -762,7 +763,7 @@ impl App {
                 );
             }
         }
-        let camera = *camera;
+        let camera = *self.camera();
         let Ok(frame) = ObservationFrame::new(self.latitude, self.longitude, self.jd) else {
             return;
         };
