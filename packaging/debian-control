@@ -1,0 +1,8 @@
+Package: mitaka-plus
+Version: @VERSION@
+Section: science
+Priority: optional
+Architecture: amd64
+Maintainer: Mitaka Plus RS contributors <mocho271828@users.noreply.github.com>
+Depends: libc6, libgcc-s1, libxkbcommon0, libwayland-client0, libx11-6, libvulkan1, xdg-desktop-portal
+Description: Rust desktop viewer for local Mitaka astronomy catalogs
