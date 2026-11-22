@@ -16,11 +16,20 @@ pub struct SkyData {
 }
 impl SkyData {
     pub fn initial_date(&self, preferred: f64) -> f64 {
-        if (self.date_range[0]..=self.date_range[1]).contains(&preferred) {
+        if self.validate_date(preferred).is_ok() {
             preferred
         } else {
             self.date_range[0]
         }
+    }
+
+    pub fn validate_date(&self, jd: f64) -> io::Result<()> {
+        if !(self.date_range[0]..=self.date_range[1]).contains(&jd) {
+            return Err(io::Error::other(
+                "日時が月位置計算またはCF96暦表の有効範囲外です",
+            ));
+        }
+        Ok(())
     }
 
     pub fn open(root: &Path) -> io::Result<Self> {

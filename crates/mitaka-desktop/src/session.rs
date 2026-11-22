@@ -34,11 +34,14 @@ fn range(v: &Value, name: &str, min: f64, max: f64) -> Result<f64> {
     Ok(n)
 }
 fn integer(v: &Value, name: &str, min: i64, max: i64) -> Result<i64> {
-    let n = range(v, name, min as f64, max as f64)?;
-    if n != n.trunc() {
-        return Err(err(name));
-    }
-    Ok(n as i64)
+    integer_value(&v[name], name, min, max)
+}
+fn integer_value(value: &Value, name: &str, min: i64, max: i64) -> Result<i64> {
+    value
+        .as_f64()
+        .filter(|n| n.fract() == 0. && (min as f64..=max as f64).contains(n))
+        .map(|n| n as i64)
+        .ok_or_else(|| err(name))
 }
 fn vector(v: &Value) -> Result<[f64; 3]> {
     let a = v
@@ -139,6 +142,11 @@ impl Session {
                 h.insert("fov_deg".into(), Value::from(180. / zoom));
             }
             h.entry("roll_deg").or_insert(Value::from(0));
+        }
+        if let Some(zone) = v.get_mut("plus_time_zone").filter(|zone| !zone.is_null()) {
+            let seconds = integer(zone, "seconds_west_utc", i32::MIN.into(), i32::MAX.into())?;
+            // GUI と Lua ホストが、旧v9の -32400.0 なども同じ整数値として読む。
+            zone["seconds_west_utc"] = seconds.into();
         }
         check_shape(&v, &ref_state.0, "root")?;
         // 保存対象は表示状態だけ。追加フィールドにHTMLの信頼やLua実行文脈を持ち込まない。
@@ -293,21 +301,10 @@ impl Session {
         integer(ts, "utc_offset_minutes", -840, 840)?;
         integer(&v["plus_time"], "step", 0, 11)?;
         integer(&v["plus_time"], "speed", i32::MIN.into(), i32::MAX.into())?;
-        if !v["plus_time_zone"].is_null() {
-            integer(
-                &v["plus_time_zone"],
-                "seconds_west_utc",
-                i32::MIN.into(),
-                i32::MAX.into(),
-            )?;
-        }
         key(&v["observer_place_identifier_base64"], true)?;
         let mut selected = BTreeSet::new();
         for hip in array(v, "selected_star_name_hips")? {
-            let n = hip
-                .as_i64()
-                .filter(|h| (1..=i64::from(i32::MAX)).contains(h))
-                .ok_or_else(|| err("HIP"))?;
+            let n = integer_value(hip, "HIP", 1, i32::MAX.into())?;
             if !selected.insert(n) {
                 return Err(err("duplicate HIP"));
             }
@@ -406,6 +403,25 @@ mod tests {
         assert!(Session::decode(&vec![b' '; LIMIT + 1]).is_err());
         let mut s = Session::default();
         s.0["satellites"]["sources"] = serde_json::json!([{"source_key_base64":"YQ==","byte_count":12,"sha256":"0".repeat(64)}]);
+        assert!(Session::decode(&serde_json::to_vec(&s.0).unwrap()).is_err());
+    }
+
+    #[test]
+    fn accepts_integral_json_numbers_for_hips_and_local_time() {
+        let mut s = Session::default();
+        s.0["selected_star_name_hips"] = serde_json::json!([123.0]);
+        s.0["plus_time_zone"] = serde_json::json!({"seconds_west_utc": -32400.0});
+        let decoded = Session::decode(&serde_json::to_vec(&s.0).unwrap()).unwrap();
+        assert_eq!(
+            decoded.0["plus_time_zone"]["seconds_west_utc"].as_i64(),
+            Some(-32400)
+        );
+        s.0["selected_star_name_hips"] = serde_json::json!([123, 123.0]);
+        assert!(Session::decode(&serde_json::to_vec(&s.0).unwrap()).is_err());
+        s.0["selected_star_name_hips"] = serde_json::json!([123.5]);
+        assert!(Session::decode(&serde_json::to_vec(&s.0).unwrap()).is_err());
+        s.0["selected_star_name_hips"] = serde_json::json!([]);
+        s.0["plus_time_zone"]["seconds_west_utc"] = serde_json::json!(5.5);
         assert!(Session::decode(&serde_json::to_vec(&s.0).unwrap()).is_err());
     }
 }
