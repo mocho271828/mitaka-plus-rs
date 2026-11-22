@@ -1,0 +1,6 @@
+/target/
+/dist/
+/temp_gates/
+/offline-build/
+/resources/
+.DS_Store
