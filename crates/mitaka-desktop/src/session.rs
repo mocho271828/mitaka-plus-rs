@@ -1,6 +1,7 @@
 //! JSON v9 の検証。未知のキーや保存ファイル内のパスを実行・展開しない。
 //! 移植元は Mitaka_plus f9fe624 の session_state.mm / session_layers_json.mm。
 use base64::{engine::general_purpose::STANDARD, Engine};
+use mitaka_core::terrain::Amplification;
 use serde_json::Value;
 use std::{
     collections::BTreeSet,
@@ -165,6 +166,10 @@ impl Session {
         out.persist(path)?;
         Ok(())
     }
+    pub fn terrain_amplification(&self) -> Result<Amplification> {
+        let stage = integer(&self.0, "terrain_amplification", 1, 5)?;
+        Amplification::from_stage(stage as u64)
+    }
     fn validate(&self) -> Result<()> {
         let v = &self.0;
         integer(v, "version", 9, 9)?;
@@ -277,7 +282,7 @@ impl Session {
                 return Err(err("surface_site.height_km"));
             }
         }
-        integer(v, "terrain_amplification", 1, 5)?;
+        self.terrain_amplification()?;
         integer(v, "milky_way_mode", 0, 3)?;
         integer(&v["radius_display"], "mode", 0, 1)?;
         for (obj, prop) in [
@@ -407,8 +412,9 @@ mod tests {
     }
 
     #[test]
-    fn accepts_integral_json_numbers_for_hips_and_local_time() {
+    fn accepts_integral_json_numbers_for_terrain_stages_hips_and_local_time() {
         let mut s = Session::default();
+        s.0["terrain_amplification"] = serde_json::json!(2.0);
         s.0["selected_star_name_hips"] = serde_json::json!([123.0]);
         s.0["plus_time_zone"] = serde_json::json!({"seconds_west_utc": -32400.0});
         let decoded = Session::decode(&serde_json::to_vec(&s.0).unwrap()).unwrap();
@@ -416,11 +422,18 @@ mod tests {
             decoded.0["plus_time_zone"]["seconds_west_utc"].as_i64(),
             Some(-32400)
         );
+        assert_eq!(
+            decoded.terrain_amplification().unwrap(),
+            Amplification::Double
+        );
         s.0["selected_star_name_hips"] = serde_json::json!([123, 123.0]);
         assert!(Session::decode(&serde_json::to_vec(&s.0).unwrap()).is_err());
         s.0["selected_star_name_hips"] = serde_json::json!([123.5]);
         assert!(Session::decode(&serde_json::to_vec(&s.0).unwrap()).is_err());
         s.0["selected_star_name_hips"] = serde_json::json!([]);
+        s.0["terrain_amplification"] = serde_json::json!(2.5);
+        assert!(Session::decode(&serde_json::to_vec(&s.0).unwrap()).is_err());
+        s.0["terrain_amplification"] = serde_json::json!(2);
         s.0["plus_time_zone"]["seconds_west_utc"] = serde_json::json!(5.5);
         assert!(Session::decode(&serde_json::to_vec(&s.0).unwrap()).is_err());
     }
