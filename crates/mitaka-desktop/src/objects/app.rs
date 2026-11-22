@@ -105,7 +105,7 @@ impl App {
     }
     pub(crate) fn object_on_sky(&self, chart: &Chart<'_>, painter: &egui::Painter) {
         if let Some((label, Position::Sky([ra, dec], _))) = &self.objects.marker {
-            if let Some(p) = chart.observed(*ra as f32, *dec as f32) {
+            if let Some(p) = chart.observed(*ra, *dec) {
                 marker(painter, chart.point(p), label);
             }
         }
