@@ -1,0 +1,27 @@
+name: Distribution
+on: workflow_dispatch
+permissions:
+  contents: read
+env:
+  MACOSX_DEPLOYMENT_TARGET: "13.0"
+jobs:
+  packages:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2025, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libx11-xcb-dev libxcb-shape0-dev libxcb-xfixes0-dev
+      - if: runner.os == 'macOS'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - run: bash tools/package.sh
+      - if: runner.os == 'Linux'
+        run: bash tools/offline-source.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mitaka-plus-${{ matrix.os }}
+          path: dist/
+          if-no-files-found: error
