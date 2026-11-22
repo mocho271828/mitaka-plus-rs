@@ -443,28 +443,31 @@ impl App {
 }
 impl App {
     pub(crate) fn start_camera_check(&mut self, ctx: &egui::Context) -> io::Result<()> {
-        let root = self
+        let data = self
             .data
             .as_ref()
-            .ok_or_else(|| io::Error::other("天文データがありません"))?
-            .root
-            .clone();
+            .ok_or_else(|| io::Error::other("天文データがありません"))?;
+        let root = data.root.clone();
+        // 2000年1月・3月を使う繰越検査は、暦表が両方の検査日時を含むときに行う。
+        let [first, last] = data.date_range;
+        let check_2000_dates = first <= crate::J2000 && last >= crate::J2000 + 60.;
         self.objects = Default::default();
         self.solar = Default::default();
         self.view = crate::projection::View::Solar;
         let dir = run::scratch()?;
-        let file = local_source(
-            dir.path(),
-            r#"
+        let check = r#"
 local saved = Time.JD
-Time:setTime(2000,2,30,3,4,5)
-assert(Time:getTimeString() == '2000,3,1,3,4,5')
-Time.min = 61
-assert(Time.hour == 4 and Time.minute == 1)
-local date = '0x7d0,01,02,03,04,05suffix'
-assert(Time:setTimeString(date) == date and Time.day == 2)
+if check_2000_dates then
+    Time:setTime(2000,2,30,3,4,5)
+    assert(Time:getTimeString() == '2000,3,1,3,4,5')
+    Time.min = 61
+    assert(Time.hour == 4 and Time.minute == 1)
+    local date = '0x7d0,01,02,03,04,05suffix'
+    assert(Time:setTimeString(date) == date and Time.day == 2)
+end
 assert(not pcall(function() return Time.localYear end))
 Time:setJDTo(saved, 0, false)
+assert(Time.JD == saved)
 Camera.target='Planet.Earth'
 assert(Camera.target=='Planet.Earth')
 Camera.duration=0
@@ -484,8 +487,9 @@ Camera:lookTo('Star.Sirius',0)
 assert(not pcall(function() Camera:setOrient(0,0,0,0) end))
 assert(not pcall(function() Camera:setZoomLogTo(-1,1) end))
 print('camera-check-complete')
-"#,
-        )?;
+"#;
+        let check = format!("local check_2000_dates = {check_2000_dates}\n{check}");
+        let file = local_source(dir.path(), &check)?;
         self.scripts.launch(file, false, root, dir, ctx);
         Ok(())
     }
