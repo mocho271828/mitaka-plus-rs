@@ -6,6 +6,7 @@ use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Stroke};
 use mitaka_core::{astronomy::ObservationFrame, catalog::Star};
 
 pub struct Options {
+    pub layers: crate::layers::LayerOptions,
     pub magnitude: f32,
     pub lines: bool,
     pub labels: bool,
@@ -14,6 +15,7 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             magnitude: 6.5,
+            layers: Default::default(),
             lines: true,
             labels: true,
         }
@@ -99,8 +101,12 @@ impl Chart<'_> {
         if self.view == View::Horizon {
             self.draw_horizon(painter);
         }
+        self.paint_layers(painter, data, &options.layers);
         if options.lines || options.labels {
             for constellation in &data.constellations {
+                if !options.layers.shows(&constellation.abbreviation) {
+                    continue;
+                }
                 if options.lines {
                     for line in &constellation.hip_lines {
                         let mut previous = None;
@@ -111,18 +117,12 @@ impl Chart<'_> {
                                 .and_then(|index| self.star_position(&data.stars[*index]))
                                 .map(|(pos, _)| pos);
                             if let (Some(a), Some(b)) = (previous, p) {
-                                // 経度0/360の継ぎ目を横断する線だけ、左右に分割して描く。
-                                let a: Pos2 = a;
-                                let period = self.rect.width() * self.camera.zoom as f32;
-                                let stroke = Stroke::new(0.8_f32, Color32::from_rgb(58, 83, 116));
-                                if (a.x - b.x).abs() > period / 2. {
-                                    let shift =
-                                        egui::vec2(if a.x < b.x { -period } else { period }, 0.);
-                                    painter.line_segment([a, b + shift], stroke);
-                                    painter.line_segment([a - shift, b], stroke);
-                                } else {
-                                    painter.line_segment([a, b], stroke);
-                                }
+                                self.stroke_segment(
+                                    painter,
+                                    a,
+                                    b,
+                                    Stroke::new(0.8_f32, Color32::from_rgb(58, 83, 116)),
+                                );
                             }
                             previous = p;
                         }
@@ -148,6 +148,9 @@ impl Chart<'_> {
         let mut pick = None;
         let mut min_sq = 8f32.powi(2);
         let mut selected_point = None;
+        if !options.layers.stars {
+            return None;
+        }
         for star in &data.stars {
             if star.magnitude > options.magnitude {
                 continue;
@@ -159,14 +162,41 @@ impl Chart<'_> {
                 continue;
             }
             let warmth = star.bv.clamp(0., 1.6) / 1.6;
-            let opacity = (1.2 - star.magnitude * 0.07).clamp(0.3, 1.) * fade;
+            let (radius, opacity) = options.layers.point_style(star.magnitude);
+            let opacity = opacity * fade;
             let color = Color32::from_rgba_unmultiplied(
                 ((0.78 + 0.22 * warmth) * 255.) as u8,
                 ((0.87 - 0.12 * warmth) * 255.) as u8,
                 ((1. - 0.4 * warmth) * 255.) as u8,
                 (opacity * 255.) as u8,
             );
-            painter.circle_filled(p, (2.8 - star.magnitude * 0.32).clamp(0.55, 3.6), color);
+            painter.circle_filled(p, radius, color);
+            if options.layers.marking == 1 && star.is_double
+                || options.layers.marking == 2 && data.layers.hosts.contains(&star.hip)
+            {
+                let color = if options.layers.marking == 1 {
+                    Color32::LIGHT_GREEN
+                } else {
+                    Color32::YELLOW
+                };
+                painter.circle_stroke(p, 6., Stroke::new(1.0_f32, color));
+            }
+            if options.layers.proper_names
+                || options.layers.bayer
+                || options.layers.flamsteed
+                || options.layers.hip
+            {
+                let name = options.layers.name(&data.layers, star);
+                if !name.is_empty() {
+                    painter.text(
+                        p + egui::vec2(radius + 2., -radius),
+                        Align2::LEFT_BOTTOM,
+                        name,
+                        FontId::proportional(11.),
+                        Color32::from_white_alpha((fade * 215.) as u8),
+                    );
+                }
+            }
             if selected == Some(star.hip) {
                 selected_point = Some(p);
             }

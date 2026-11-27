@@ -4,6 +4,7 @@ mod chart;
 mod commands;
 mod fonts;
 mod galaxies;
+mod layers;
 mod media_preview;
 mod objects;
 mod playback;
@@ -191,6 +192,9 @@ impl App {
             match SkyData::open(&root) {
                 Ok(data) => {
                     let jd = data.initial_date(self.jd);
+                    self.options.layers.observer.clear();
+                    self.options.layers.selected = None;
+                    self.options.layers.exceptions.clear();
                     self.data = Some(data);
                     if jd != self.jd {
                         self.set_date(jd);
@@ -473,8 +477,21 @@ impl App {
                 });
                 ui.separator();
                 self.clock_controls(ui);
-                ui.add(egui::Slider::new(&mut self.latitude, -90. ..=90.).text("緯度 °"));
-                ui.add(egui::Slider::new(&mut self.longitude, -180. ..=180.).text("東経 °"));
+                let lat_changed = ui
+                    .add(egui::Slider::new(&mut self.latitude, -90. ..=90.).text("緯度 °"))
+                    .changed();
+                let lon_changed = ui
+                    .add(egui::Slider::new(&mut self.longitude, -180. ..=180.).text("東経 °"))
+                    .changed();
+                if lat_changed || lon_changed {
+                    self.options.layers.observer.clear();
+                }
+                self.options.layers.ui(
+                    ui,
+                    self.data.as_ref(),
+                    &mut self.latitude,
+                    &mut self.longitude,
+                );
                 ui.add(
                     egui::Slider::new(&mut self.options.magnitude, -1.5..=16.).text("V 等級上限"),
                 );

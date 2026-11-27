@@ -67,6 +67,7 @@ impl App {
         v["magnitude_limit"] = json!(self.options.magnitude);
         v["observer_latitude_deg"] = json!(self.latitude);
         v["observer_longitude_deg"] = json!(self.longitude);
+        self.options.layers.save(v, data);
         v["constellations"]["lines"] = json!(self.options.lines);
         v["constellations"]["labels"] = json!(self.options.labels);
         v["planets"]["orbits"] = json!(self.solar.orbits);
@@ -125,6 +126,8 @@ impl App {
         self.objects = Default::default();
         self.objects.selections = selections;
         self.scripts.cancel();
+        let layers = crate::layers::LayerOptions::restore(v, data)?;
+        self.options.layers = layers;
         self.solar.stop();
         self.set_date(jd);
         self.solar.camera.target = target;

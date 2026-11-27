@@ -123,6 +123,8 @@ pub const FIELDS: &[Field] = &[
     flag("GUI", "scriptOutput", "toggleScriptOutput", "scriptOutput", 16, true),
     flag("GUI", "dualScreen", "toggleDualScreen", "dualScreen", 17, true),
     field("Time", "JD", "jd", 0, Finite),
+    field("Stars","markingType","starMarking",22,Text),
+    field("Stars","brightness","starBrightness",60,Finite),
     field("Time", "step", "timeStep", 72, Index(11)),
     field("Time", "stepValue", "timeStepValue", 73, Finite),
     field("Time", "speed", "timeSpeed", 74, Speed),
