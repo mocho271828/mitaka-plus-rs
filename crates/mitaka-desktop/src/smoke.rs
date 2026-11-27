@@ -14,6 +14,8 @@ enum Scene {
     Sky,
     Horizon,
     Solar,
+    GlobeEarth,
+    GlobeMars,
     Earth,
     Mars,
     Galaxy,
@@ -24,6 +26,8 @@ impl Scene {
             Self::Sky => "sky",
             Self::Horizon => "horizon",
             Self::Solar => "solar",
+            Self::GlobeEarth => "earth-sphere",
+            Self::GlobeMars => "mars-sphere",
             Self::Earth => "earth",
             Self::Mars => "mars",
             Self::Galaxy => "galaxy",
@@ -48,6 +52,8 @@ impl Smoke {
                     Scene::Sky,
                     Scene::Horizon,
                     Scene::Solar,
+                    Scene::GlobeEarth,
+                    Scene::GlobeMars,
                     Scene::Earth,
                     Scene::Mars,
                     Scene::Galaxy,
@@ -73,6 +79,12 @@ impl Smoke {
             Scene::Solar => {
                 // 単なるエラー文を描画成功として数えない。
                 app.solar.prepare(&data.ephemeris, app.jd)?;
+                app.view = View::Solar;
+            }
+            Scene::GlobeEarth | Scene::GlobeMars => {
+                let body = if scene == Scene::GlobeEarth { 3 } else { 4 };
+                app.solar.prepare(&data.ephemeris, app.jd)?;
+                app.solar.approach(body)?;
                 app.view = View::Solar;
             }
             Scene::Earth | Scene::Mars => {
