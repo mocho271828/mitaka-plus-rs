@@ -398,6 +398,83 @@ mod render_tests {
             })
             .collect()
     }
+    fn text_row(view: &egui::FullOutput, matches: impl Fn(&str) -> bool) -> egui::Rect {
+        view.shapes
+            .iter()
+            .find_map(|s| {
+                let egui::Shape::Text(text) = &s.shape else {
+                    return None;
+                };
+                let row = text.galley.rows.iter().find(|r| matches(&r.text()))?;
+                Some(row.rect.translate(text.pos.to_vec2()))
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn short_link_continues_the_wrapped_paragraph() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wrap.html");
+        let text = "word ".repeat(16) + "tail";
+        let contents = format!("{text}<b>Em</b><a href='mtkp://print(41)'>Run</a>");
+        let cell = format!("<td style='text-align:right'>{contents}</td>");
+        for html in [
+            format!("<p>{contents}</p>"),
+            format!("<table><tr>{cell}<td>Other cell</td></tr></table>"),
+        ] {
+            fs::write(&path, html).unwrap();
+            let mut page = Document::open(path.clone()).unwrap();
+            let ctx = egui::Context::default();
+            render(&mut page, &ctx, vec![]);
+            let (view, _) = render(&mut page, &ctx, vec![]);
+            let tail = text_row(&view, |s| s.ends_with("tail"));
+            let emphasis = label_rect(&view, "Em");
+            let link = label_rect(&view, "Run");
+            assert!(tail.y_range().contains(link.center().y));
+            assert!(tail.y_range().contains(emphasis.center().y));
+            assert!(emphasis.left() >= tail.right() && link.left() >= emphasis.right());
+            assert!(click(&mut page, &ctx, link.center()).is_none());
+            page.trusted = true;
+            render(&mut page, &ctx, vec![]);
+            assert!(click(&mut page, &ctx, emphasis.center()).is_none());
+            let Some(Tag::Action(b, p)) = click(&mut page, &ctx, link.center()) else {
+                panic!("visible link was not activated")
+            };
+            assert_eq!(page.activate(b, p).unwrap(), "print(41)");
+        }
+    }
+
+    #[test]
+    fn all_wrapped_link_fragments_resolve_to_the_original_anchor() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("long-link.html");
+        let words = "word ".repeat(42);
+        fs::write(
+            &path,
+            format!("<p>Lead<a href='mtkp://print(42)'>start {words}end</a><i>After</i></p>"),
+        )
+        .unwrap();
+        let mut page = Document::open(path).unwrap();
+        page.trusted = true;
+        let ctx = egui::Context::default();
+        render(&mut page, &ctx, vec![]);
+        let (view, _) = render(&mut page, &ctx, vec![]);
+        let first = text_row(&view, |s| s.starts_with("start"));
+        let middle = text_row(&view, |s| s.starts_with("word ") && !s.ends_with("end"));
+        let last = text_row(&view, |s| s.ends_with("end"));
+        assert!(first
+            .y_range()
+            .contains(label_rect(&view, "Lead").center().y));
+        assert!(last
+            .y_range()
+            .contains(label_rect(&view, "After").center().y));
+        for row in [first, middle, last] {
+            let Some(Tag::Action(b, p)) = click(&mut page, &ctx, row.center()) else {
+                panic!("wrapped link fragment was not activated")
+            };
+            assert_eq!(page.activate(b, p).unwrap(), "print(42)");
+        }
+    }
     #[test]
     fn css_in_tables_binds_only_a_visible_pointer_click_and_revokes_on_change() {
         let dir = tempfile::tempdir().unwrap();
