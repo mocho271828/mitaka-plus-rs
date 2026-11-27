@@ -304,11 +304,38 @@ impl Default for Solar {
 impl Solar {
     pub fn prepare(&mut self, system: &Cf96Ephemeris, jd: f64) -> io::Result<()> {
         if self.scene.as_ref().is_none_or(|s| s.jd != jd) {
-            let scene = Scene::load(system, jd)?;
+            self.scene = Some(Scene::load(system, jd)?);
+        }
+        Ok(())
+    }
+    pub(crate) fn prepare_visible_scene(
+        &mut self,
+        system: &Cf96Ephemeris,
+        root: &std::path::Path,
+        jd: f64,
+    ) -> io::Result<()> {
+        self.prepare(system, jd)?;
+        if let Some(scene) = self
+            .scene
+            .as_mut()
+            .filter(|s| !s.satellite_positions_checked)
+        {
+            let source = self
+                .eclipse_source
+                .get_or_insert_with(|| eclipse::Source::load(root).map_err(|e| e.to_string()));
+            match source {
+                Ok(source) => {
+                    if let Err(error) = source.apply(scene, system) {
+                        scene.eclipse_warnings.push(error.to_string());
+                    }
+                }
+                Err(error) => scene.eclipse_warnings.push(error.clone()),
+            }
+            scene.satellite_positions_checked = true;
+            // 衛星カタログが地球・月の位置を補正した後、実際に描く中点を追う。
             if self.tracking == (Tracking::EarthMoon { following: true }) {
                 self.camera.target = scale(plus(scene.bodies[3], scene.bodies[10]), 0.5);
             }
-            self.scene = Some(scene);
         }
         Ok(())
     }
@@ -534,25 +561,7 @@ impl Solar {
         let system = &data.ephemeris;
         let root = &data.root;
 
-        self.prepare(system, jd)?;
-        if let Some(scene) = self
-            .scene
-            .as_mut()
-            .filter(|s| !s.satellite_positions_checked)
-        {
-            let source = self
-                .eclipse_source
-                .get_or_insert_with(|| eclipse::Source::load(root).map_err(|e| e.to_string()));
-            match source {
-                Ok(source) => {
-                    if let Err(error) = source.apply(scene, system) {
-                        scene.eclipse_warnings.push(error.to_string());
-                    }
-                }
-                Err(error) => scene.eclipse_warnings.push(error.clone()),
-            }
-            scene.satellite_positions_checked = true;
-        }
+        self.prepare_visible_scene(system, root, jd)?;
         let (response, painter) =
             ui.allocate_painter(ui.available_size(), egui::Sense::click_and_drag());
         let rect = response.rect;
@@ -926,12 +935,14 @@ mod tests {
         let eph = Cf96Ephemeris::load(&root.join("cf96.dat")).unwrap();
         let mut solar = Solar::default();
         let rect = Rect::from_min_size(Pos2::ZERO, egui::vec2(600., 400.));
-        solar.prepare(&eph, 2451545.).unwrap();
+        solar.prepare_visible_scene(&eph, &root, 2451545.).unwrap();
         let centers = solar.body_centers().unwrap();
         solar.show_earth_moon(centers[3], centers[10]);
         let distance = solar.camera.distance;
         for days in [1., 7., 365.] {
-            solar.prepare(&eph, 2451545. + days).unwrap();
+            solar
+                .prepare_visible_scene(&eph, &root, 2451545. + days)
+                .unwrap();
             let centers = solar.body_centers().unwrap();
             assert_eq!(
                 solar.camera.target,

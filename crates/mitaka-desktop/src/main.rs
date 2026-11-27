@@ -561,7 +561,7 @@ impl App {
             if let Some(data) = &self.data {
                 match self
                     .solar
-                    .prepare(&data.ephemeris, self.jd)
+                    .prepare_visible_scene(&data.ephemeris, &data.root, self.jd)
                     .and_then(|_| self.solar.body_centers())
                 {
                     Ok(centers) => {
