@@ -43,6 +43,9 @@ impl LayerOptions {
         }
         Ok(())
     }
+    pub(crate) fn stop_brightness(&mut self) {
+        self.fade = None;
+    }
     pub(crate) fn sample_brightness(&mut self, now: Instant) -> bool {
         let Some(fade) = &self.fade else { return false };
         let elapsed = now.saturating_duration_since(fade.start).as_secs_f64();
