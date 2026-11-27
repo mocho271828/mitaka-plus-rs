@@ -131,6 +131,7 @@ impl Smoke {
         match scene {
             Scene::Sky => {
                 super::data_loading::check_switch(app, ctx)?;
+                super::preferences::check_restart(app)?;
                 check_date_limits(app)?;
                 app.view = View::Sky;
                 app.projector.open = true;

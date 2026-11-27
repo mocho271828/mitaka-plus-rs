@@ -92,6 +92,7 @@ impl App {
         self.selected = None;
         self.error = None;
         self.search_message.clear();
+        self.restore_preferences();
     }
 }
 

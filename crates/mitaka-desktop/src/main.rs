@@ -14,6 +14,7 @@ mod objects;
 mod planet_layers;
 mod planet_scale;
 mod playback;
+mod preferences;
 mod projection;
 mod projector;
 mod script_ui;
@@ -120,6 +121,7 @@ struct App {
     session: session::Session,
     data: Option<SkyData>,
     pending_data: Option<data_loading::Request>,
+    preferences: preferences::Preferences,
     solar: solar::Solar,
     surface: Option<surface::Surface>,
     galaxies: Option<galaxies::Browser>,
@@ -162,12 +164,24 @@ impl App {
         if let Some(data) = &initial {
             media.reset(&data.root);
         }
-        Ok(Self {
+        let (preferences, error) = if smoke.is_some() {
+            (preferences::Preferences::Disabled, error)
+        } else {
+            match preferences::config_dir() {
+                Ok(dir) => (
+                    preferences::Preferences::Unread(dir.join("display-v9.json")),
+                    error,
+                ),
+                Err(e) => (preferences::Preferences::Disabled, Some(e.to_string())),
+            }
+        };
+        let mut app = Self {
             picking: Default::default(),
             quality: Default::default(),
             terrain_amplification: Default::default(),
             data: initial,
             pending_data: None,
+            preferences,
             motion: Default::default(),
             background_render: Default::default(),
             landscape_render: Default::default(),
@@ -201,7 +215,9 @@ impl App {
             error,
             utc: utc.format("%Y-%m-%d %H:%M:%S").to_string(),
             smoke,
-        })
+        };
+        app.restore_preferences();
+        Ok(app)
     }
     fn set_terrain_mode(
         &mut self,
@@ -905,6 +921,12 @@ impl App {
     }
 }
 impl eframe::App for App {
+    fn on_exit(&mut self) {
+        if let Err(error) = self.save_preferences() {
+            eprintln!("表示設定を保存できません: {error}");
+        }
+    }
+
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         if let Err(error) = self.fullscreen.poll(ctx) {
             self.error = Some(error.into());
