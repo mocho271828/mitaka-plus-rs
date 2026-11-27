@@ -55,7 +55,7 @@ fn dot(a: Point, b: Point) -> f64 {
     a.into_iter().zip(b).map(|(x, y)| x * y).sum()
 }
 
-fn planet(system: &Cf96Ephemeris, index: usize, jd: f64) -> io::Result<Point> {
+pub(crate) fn planet(system: &Cf96Ephemeris, index: usize, jd: f64) -> io::Result<Point> {
     let position = system.state(index, jd)?.position_au;
     let position = if index == 2 {
         earth_center(position, lunar_position(jd)?)
@@ -104,6 +104,9 @@ impl Scene {
 }
 #[derive(Clone, Copy, PartialEq)]
 pub struct SolarCamera {
+    pub(crate) fov: f64,
+    pub(crate) frame: Option<[[f64; 3]; 3]>,
+    pub(crate) frame_is_orbit: bool,
     pub target: Point,
     pub distance: f64,
     pub yaw: f64,
@@ -115,6 +118,9 @@ impl Default for SolarCamera {
         Self {
             target: [0.; 3],
             distance: 100.,
+            fov: 45.,
+            frame: None,
+            frame_is_orbit: false,
             yaw: 35.,
             pitch: 35.,
             roll: 0.,
@@ -122,7 +128,10 @@ impl Default for SolarCamera {
     }
 }
 impl SolarCamera {
-    fn basis(self) -> [Point; 3] {
+    pub(crate) fn basis(self) -> [Point; 3] {
+        if let Some(f) = self.frame {
+            return f;
+        }
         let (sy, cy) = self.yaw.to_radians().sin_cos();
         let (sp, cp) = self.pitch.to_radians().sin_cos();
         let (sr, cr) = self.roll.to_radians().sin_cos();
@@ -141,7 +150,7 @@ impl SolarCamera {
         if depth <= self.distance * 0.0001 {
             return None;
         }
-        let factor = f64::from(rect.height()) / (2. * (22.5_f64).to_radians().tan() * depth);
+        let factor = f64::from(rect.height()) / (2. * (self.fov * 0.5).to_radians().tan() * depth);
         let xy = rect.center()
             + egui::vec2(
                 (dot(rel, right) * factor) as f32,
@@ -161,6 +170,7 @@ struct SurfaceFlight {
     lon: f64,
     height_m: f64,
     started: Instant,
+    duration: f64,
     source: SolarCamera,
     ascend: bool,
 }
@@ -262,6 +272,9 @@ impl Solar {
         if ascend {
             self.camera = SolarCamera {
                 target: center,
+                fov: self.camera.fov,
+                frame: None,
+                frame_is_orbit: false,
                 yaw: site.lon,
                 pitch: site.lat,
                 roll: 0.,
@@ -270,6 +283,8 @@ impl Solar {
         } else {
             self.approach(body)?;
         }
+        self.camera.frame = None;
+        self.camera.frame_is_orbit = false;
         self.selected = body;
         self.follow = false;
         self.flight = None;
@@ -280,6 +295,7 @@ impl Solar {
             lon,
             height_m,
             started: Instant::now(),
+            duration: 7.1,
             source: self.camera,
             ascend,
         });
@@ -291,7 +307,11 @@ impl Solar {
         };
         let body = move_.body;
         let site = site_target(body, move_.lat, move_.lon, move_.height_m, jd)?;
-        let t = (move_.started.elapsed().as_secs_f64() / 7.1).min(1.);
+        let t = if move_.duration == 0. {
+            1.
+        } else {
+            (move_.started.elapsed().as_secs_f64() / move_.duration).min(1.)
+        };
         let fraction = (1. - (t * std::f64::consts::PI).cos()) * 0.5;
         let distance = if move_.ascend {
             RADII_KM[body] * 6. / KM_PER_AU
@@ -312,6 +332,17 @@ impl Solar {
             self.follow = true;
         }
         Ok(true)
+    }
+    pub(crate) fn flight_duration(&mut self, seconds: f64) {
+        if let Some(f) = &mut self.surface_flight {
+            f.duration = seconds
+        }
+    }
+    pub(crate) fn body_point(&self, id: usize) -> Option<[f64; 3]> {
+        self.scene.as_ref()?.bodies.get(id).copied()
+    }
+    pub(crate) fn body_distance(id: usize) -> f64 {
+        RADII_KM[id] * 6. / KM_PER_AU
     }
     pub fn start_flight(&mut self) {
         self.stop();
@@ -394,11 +425,13 @@ impl Solar {
         let rect = response.rect;
         let modifiers = ui.input(|i| i.modifiers);
         if response.dragged() {
+            self.camera.frame = None;
+            self.camera.frame_is_orbit = false;
             self.stop();
             let d = response.drag_delta();
             if modifiers.shift || response.dragged_by(egui::PointerButton::Secondary) {
                 let [r, u, _] = self.camera.basis();
-                let factor = 2. * self.camera.distance * (22.5_f64).to_radians().tan()
+                let factor = 2. * self.camera.distance * (self.camera.fov * 0.5).to_radians().tan()
                     / f64::from(rect.height().max(1.));
                 self.camera.target = plus(
                     self.camera.target,
@@ -514,7 +547,8 @@ impl Solar {
         let mut nearest = f32::INFINITY;
         for (i, pos, depth) in visible {
             let radius = (RADII_KM[i] / KM_PER_AU * f64::from(rect.height())
-                / (2. * (22.5_f64).to_radians().tan() * depth)) as f32;
+                / (2. * (self.camera.fov * 0.5).to_radians().tan() * depth))
+                as f32;
             let physical = radius;
             let factor = self.layers.scales[usize::from(i == 0)];
             let radius = (radius.max(if i == 0 { 5. } else { 2.6 }) * factor)

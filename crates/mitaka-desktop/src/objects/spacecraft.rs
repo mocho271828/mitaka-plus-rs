@@ -26,6 +26,20 @@ impl Craft {
         );
         w
     }
+    pub(super) fn match_name(&self, id: usize, key: &str) -> bool {
+        let Some(SourceData::Definition(d)) = self.0.sources[id].data.as_ref() else {
+            return false;
+        };
+        [
+            (b"Name".as_slice(), b"".as_slice()),
+            (b"DisplayName", b""),
+            (b"KEY", b""),
+            (b"NAME", b"ja"),
+            (b"NAME", b"default"),
+        ]
+        .iter()
+        .any(|(field, section)| d.field(field, section) == Some(key.as_bytes()))
+    }
     pub(super) fn entries(&self) -> impl Iterator<Item = (usize, String, String)> + '_ {
         self.0.sources.iter().enumerate().filter_map(|(i, src)| {
             let SourceData::Definition(d) = src.data.as_ref()? else {

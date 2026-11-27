@@ -46,7 +46,7 @@ impl App {
             self.restore_session(&path)
         }
     }
-    fn save_session(&self, path: &Path) -> io::Result<()> {
+    pub(crate) fn save_session(&self, path: &Path) -> io::Result<()> {
         let data = self
             .data
             .as_ref()
@@ -58,12 +58,12 @@ impl App {
         v["mode"] = json!(match self.view {
             View::Sky => 0,
             View::Horizon => 2,
-            View::Solar => 1,
-            View::Surface | View::Galaxy =>
+            View::Solar | View::Surface => 1,
+            View::Galaxy =>
                 return Err(io::Error::other("この表示モードの保存には対応していません")),
         });
         v["sky_viewport"] = json!({"center_ra_deg":self.sky.longitude,"center_dec_deg":self.sky.latitude,"zoom":self.sky.zoom});
-        v["horizon_viewport"] = json!({"center_azimuth_deg":self.horizon.longitude,"center_altitude_deg":self.horizon.latitude,"zoom":self.horizon.zoom,"fov_deg":180./self.horizon.zoom,"roll_deg":0.0});
+        v["horizon_viewport"] = json!({"center_azimuth_deg":self.horizon.longitude,"center_altitude_deg":self.horizon.latitude,"zoom":self.horizon.zoom.clamp(1.,180.),"fov_deg":self.horizon_fov(),"roll_deg":self.horizon.roll});
         v["magnitude_limit"] = json!(self.options.magnitude);
         v["observer_latitude_deg"] = json!(self.latitude);
         v["observer_longitude_deg"] = json!(self.longitude);
@@ -71,8 +71,12 @@ impl App {
         v["constellations"]["lines"] = json!(self.options.lines);
         v["constellations"]["labels"] = json!(self.options.labels);
         v["planets"]["orbits"] = json!(self.solar.orbits);
-        v["solar_camera"] = json!({"target":self.solar.camera.target, "distance_au":self.solar.camera.distance, "yaw_deg":self.solar.camera.yaw,"pitch_deg":self.solar.camera.pitch, "roll_deg":self.solar.camera.roll,"fov_deg":45.0,"frame":null,"frame_is_orbit":false});
-        v["selected_body"] = json!(self.solar.selected);
+        self.session_camera(v)?;
+        v["selected_body"] = json!(if self.view == View::Surface {
+            self.surface.as_ref().unwrap().body
+        } else {
+            self.solar.selected
+        });
         self.objects.selections.apply_to(v);
         let layers = &self.solar.layers;
         v["planets"]["visible"] = json!(layers.visible);
@@ -103,7 +107,7 @@ impl App {
             json!({"step":p.gui_step,"custom_seconds":p.seconds,"utc_offset_minutes":p.offset});
         state.write(&path)
     }
-    fn restore_session(&mut self, path: &Path) -> io::Result<()> {
+    pub(crate) fn restore_session(&mut self, path: &Path) -> io::Result<()> {
         let state = Session::read(path)?;
         let v = &state.0;
         let data = self
@@ -115,14 +119,7 @@ impl App {
         };
         let jd = num(v, "julian_date");
         data.validate_date(jd)?;
-        if v.get("surface_site").is_some()
-            || !v["solar_camera"]["frame"].is_null()
-            || v["horizon_viewport"]["roll_deg"].as_f64() != Some(0.0)
-        {
-            return Err(io::Error::other(
-                "地表姿勢・傾きを含むセッションは、この版では復元できません",
-            ));
-        }
+        let restored_site = crate::camera_control::session::saved_site(v)?;
         let selections = crate::objects::selections::Selections::load(&data.root, v)?;
         let camera = &v["solar_camera"];
         let mut target: [f64; 3] = std::array::from_fn(|i| camera["target"][i].as_f64().unwrap());
@@ -134,19 +131,15 @@ impl App {
                 )
             });
         }
-        if camera["fov_deg"].as_f64() != Some(45.) {
-            return Err(io::Error::other(
-                "太陽系の画角が45度以外の状態には未対応です",
-            ));
-        }
+        let layers = crate::layers::LayerOptions::restore(v, data)?;
         // 検証と出典照合が全て成功してから、補間を停止して一括適用する。
         self.objects = Default::default();
         self.objects.selections = selections;
         self.scripts.cancel();
-        let layers = crate::layers::LayerOptions::restore(v, data)?;
         self.options.layers = layers;
         self.solar.stop();
         self.set_date(jd);
+        self.camera_extras_after_restore(camera, restored_site);
         self.solar.camera.target = target;
         self.solar.camera.distance = num(camera, "distance_au");
         self.solar.camera.yaw = num(camera, "yaw_deg");
@@ -158,12 +151,15 @@ impl App {
             longitude: num(&v["sky_viewport"], "center_ra_deg"),
             latitude: num(&v["sky_viewport"], "center_dec_deg"),
             zoom: num(&v["sky_viewport"], "zoom"),
+            roll: 0.,
         };
         self.horizon = Camera {
             longitude: num(&v["horizon_viewport"], "center_azimuth_deg"),
             latitude: num(&v["horizon_viewport"], "center_altitude_deg"),
-            zoom: 180. / num(&v["horizon_viewport"], "fov_deg"),
+            zoom: 1.,
+            roll: num(&v["horizon_viewport"], "roll_deg"),
         };
+        self.set_horizon_fov(num(&v["horizon_viewport"], "fov_deg"));
         self.options.lines = v["constellations"]["lines"].as_bool().unwrap();
         self.options.labels = v["constellations"]["labels"].as_bool().unwrap();
         self.options.magnitude = num(v, "magnitude_limit") as f32;

@@ -166,6 +166,12 @@ print(string.rep("x", 8190), "🪐")
 print(string.rep("x", 8191) .. string.char(0xe3, 0x81))
 print(string.char(255))
 Time:stop()
+Camera:setZoomLogTo(4*UNIT_AU)
+Camera:setEulerTo(10,20,30,0.5,false)
+local x,y,z,w=Camera:getOrient()
+assert(x==0 and y==0 and z==0 and w==1)
+assert(not pcall(function() Camera.setZoomTo(Stars,1,0) end))
+assert(not pcall(function() Camera:setAzimuthTo(0,1,"bad") end))
 "#,
     )
     .unwrap();
@@ -198,7 +204,7 @@ Time:stop()
         let msg: Value = serde_json::from_slice(&body).unwrap();
         let reply = match msg["op"].as_str().unwrap() {
             "snapshot" => {
-                json!({"ok":true, "jd":2451545.0, "distance":1.0, "starLabels":false, "target":"Planet.Earth"})
+                json!({"ok":true, "jd":2451545.0, "distance":1.0, "starLabels":false, "target":"Planet.Earth", "cameraDuration":2.0, "cameraOrientation":[0.0,0.0,0.0,1.0]})
             }
             "apply" => {
                 actions.push(msg);
@@ -222,7 +228,15 @@ Time:stop()
         socket.flush().unwrap();
     }
     assert!(child.wait().unwrap().success());
-    assert_eq!(actions.len(), 3);
+    assert_eq!(actions.len(), 5);
+    assert_eq!(actions[3]["kind"], 103);
+    assert_eq!(actions[3]["number"], 4.);
+    assert_eq!(actions[3]["enabled"], true);
+    assert_eq!(actions[3]["duration"], 2.);
+    assert_eq!(actions[4]["kind"], 98);
+    assert_eq!(actions[4]["orientation"], json!([10., 20., 30.]));
+    assert_eq!(actions[4]["enabled"], false);
+    assert_eq!(actions[4]["duration"], 0.5);
     assert_eq!(actions[0]["kind"], 0);
     assert_eq!(actions[0]["number"], 2451546.0);
     assert_eq!(actions[1]["kind"], 8);

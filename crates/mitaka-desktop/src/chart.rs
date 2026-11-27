@@ -59,9 +59,10 @@ impl Chart<'_> {
         for i in 0..=192 {
             let fraction = i as f32 / 192.;
             let longitude = ((f64::from(fraction) - 0.5) * 360. / self.camera.zoom).to_radians();
-            let altitude = (-longitude.cos() * tilt.sin())
-                .atan2(tilt.cos())
-                .to_degrees();
+            let (sr, cr) = self.camera.roll.to_radians().sin_cos();
+            let a = longitude.cos() * tilt.sin() - longitude.sin() * sr * tilt.cos();
+            let b = tilt.cos() * cr;
+            let altitude = if b >= 0. { (-a).atan2(b) } else { a.atan2(-b) }.to_degrees();
             let y = self.rect.center().y
                 - (altitude * self.camera.zoom / 180.) as f32 * self.rect.height();
             let x = self.rect.left() + fraction * self.rect.width();
@@ -69,7 +70,17 @@ impl Chart<'_> {
                 Pos2::new(x, y.clamp(self.rect.top(), self.rect.bottom())),
                 color,
             );
-            mesh.colored_vertex(Pos2::new(x, self.rect.bottom()), color);
+            mesh.colored_vertex(
+                Pos2::new(
+                    x,
+                    if b >= 0. {
+                        self.rect.bottom()
+                    } else {
+                        self.rect.top()
+                    },
+                ),
+                color,
+            );
             if i > 0 {
                 let k = 2 * i;
                 mesh.add_triangle(k - 2, k - 1, k);

@@ -310,6 +310,7 @@ mod tests {
                     longitude: 180.,
                     latitude: 0.,
                     zoom: 2.,
+                    roll: 0.,
                 },
                 0.,
             ),
