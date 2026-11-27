@@ -2,7 +2,7 @@ use super::{
     assets::Files,
     hidden, lua_payload,
     style::{Paint, Styles},
-    Block, Cell, Piece, Tag,
+    Block, Cell, Outline, Piece,
 };
 use eframe::egui;
 use scraper::{ElementRef, Node};
@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 pub(super) struct Layout<'a> {
     pub blocks: Vec<Block>,
+    pub outlines: Vec<Outline>,
     pub blocked: bool,
     pub paper: egui::Color32,
     styles: &'a Styles,
@@ -20,6 +21,7 @@ pub(super) struct Layout<'a> {
 #[derive(Clone, Copy, Default)]
 struct Context {
     style: Paint,
+    inset: egui::epaint::Marginf,
     heading: u8,
     cell: Option<Cell>,
 }
@@ -32,6 +34,7 @@ impl<'a> Layout<'a> {
     pub fn build(root: ElementRef<'_>, styles: &'a Styles, files: &'a mut Files) -> Self {
         let mut out = Self {
             blocks: vec![],
+            outlines: vec![],
             blocked: styles.blocked,
             paper: egui::Color32::WHITE,
             styles,
@@ -63,6 +66,16 @@ impl<'a> Layout<'a> {
         }
         out
     }
+    fn begin_block(&mut self, ctx: Context) {
+        self.blocks.push(Block {
+            align: ctx.style.align.unwrap_or(egui::Align::LEFT),
+            inset: ctx.inset,
+            heading: ctx.heading,
+            cell: ctx.cell,
+            parts: vec![],
+        });
+        self.break_line = false;
+    }
     fn push(&mut self, ctx: Context, part: Piece) {
         if self.break_line
             || self
@@ -70,12 +83,7 @@ impl<'a> Layout<'a> {
                 .last()
                 .is_none_or(|b| b.cell != ctx.cell || b.heading != ctx.heading)
         {
-            self.blocks.push(Block {
-                heading: ctx.heading,
-                cell: ctx.cell,
-                parts: vec![],
-            });
-            self.break_line = false;
+            self.begin_block(ctx);
         }
         self.blocks.last_mut().unwrap().parts.push(part);
     }
@@ -185,6 +193,7 @@ impl<'a> Layout<'a> {
             || matches!(
                 name,
                 "address"
+                    | "center"
                     | "blockquote"
                     | "div"
                     | "p"
@@ -201,16 +210,18 @@ impl<'a> Layout<'a> {
                     | "hr"
                     | "table"
             );
+        let start = self.blocks.len();
+        let outer = ctx.inset;
+        let margin = style.borders.margin();
+        let outlined = (block || name == "body") && margin != Default::default();
+        if outlined {
+            ctx.inset = outer + margin;
+        }
         if block {
             self.break_line = true;
         }
         if matches!(name, "td" | "th") {
-            self.blocks.push(Block {
-                heading: 0,
-                cell: ctx.cell,
-                parts: vec![],
-            });
-            self.break_line = false;
+            self.begin_block(ctx);
         }
         if heading != 0 {
             ctx.heading = heading;
@@ -243,7 +254,7 @@ impl<'a> Layout<'a> {
                     (None, Some(h)) => original * (h / original.y),
                     _ => original,
                 };
-                self.push(ctx, Piece::Image(image, size));
+                self.push(ctx, Piece::Image(image, size, style));
             } else if let Some(alt) = el.attr("alt") {
                 self.text(ctx, alt, None);
             }
@@ -266,91 +277,18 @@ impl<'a> Layout<'a> {
                 self.text(ctx, t, anchor);
             }
         }
+        if outlined {
+            if start == self.blocks.len() {
+                self.begin_block(ctx);
+            }
+            self.outlines.push(Outline {
+                blocks: start..self.blocks.len(),
+                outer,
+                paint: style,
+            });
+        }
         if block {
             self.break_line = true;
         }
     }
-}
-
-pub(super) fn draw(
-    ui: &mut egui::Ui,
-    blocks: &[Block],
-    files: &mut Files,
-    trusted: bool,
-) -> Option<Tag> {
-    let mut selected = None;
-    let mut i = 0;
-    while i < blocks.len() {
-        if let Some(cell) = blocks[i].cell {
-            egui::Grid::new(("html-table", cell.table))
-                .striped(true)
-                .spacing(egui::vec2(12., 4.))
-                .show(ui, |ui| {
-                    while i < blocks.len() && blocks[i].cell.is_some_and(|c| c.table == cell.table)
-                    {
-                        let current = blocks[i].cell.unwrap();
-                        ui.vertical(|ui| {
-                            while i < blocks.len() && blocks[i].cell == Some(current) {
-                                draw_block(ui, &blocks[i], i, files, trusted, &mut selected);
-                                i += 1;
-                            }
-                        });
-                        if !blocks
-                            .get(i)
-                            .and_then(|b| b.cell)
-                            .is_some_and(|c| c.table == cell.table && c.row == current.row)
-                        {
-                            ui.end_row();
-                        }
-                    }
-                });
-        } else {
-            draw_block(ui, &blocks[i], i, files, trusted, &mut selected);
-            i += 1;
-        }
-    }
-    selected
-}
-fn draw_block(
-    ui: &mut egui::Ui,
-    block: &Block,
-    index: usize,
-    files: &mut Files,
-    trusted: bool,
-    selected: &mut Option<Tag>,
-) {
-    ui.horizontal_wrapped(|ui| {
-        for (i, part) in block.parts.iter().enumerate() {
-            match part {
-                Piece::Text(s, paint) => {
-                    ui.label(paint.rich(s, block.heading, false));
-                }
-                Piece::Link {
-                    label,
-                    style,
-                    can_run,
-                    ..
-                } => {
-                    if *can_run {
-                        if ui
-                            .add_enabled(
-                                trusted,
-                                egui::Link::new(style.rich(label, block.heading, true)),
-                            )
-                            .clicked()
-                        {
-                            *selected = Some(Tag::Action(index, i));
-                        }
-                    } else if ui
-                        .link(style.rich(label, block.heading, true))
-                        .on_hover_text("このリンクは移動・実行できません")
-                        .clicked()
-                    {
-                        *selected = Some(Tag::Revoke);
-                    }
-                }
-                Piece::Image(i, size) => files.images[*i].draw(ui, *size),
-            }
-        }
-    });
 }

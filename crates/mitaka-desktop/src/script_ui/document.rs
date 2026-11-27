@@ -1,4 +1,6 @@
 mod assets;
+mod border;
+mod draw;
 mod layout;
 mod style;
 use eframe::egui;
@@ -78,7 +80,7 @@ enum Piece {
         can_run: bool,
         style: Paint,
     },
-    Image(usize, egui::Vec2),
+    Image(usize, egui::Vec2, Paint),
 }
 #[derive(PartialEq, Eq, Clone, Copy)]
 struct Cell {
@@ -86,7 +88,14 @@ struct Cell {
     row: usize,
     col: usize,
 }
+struct Outline {
+    blocks: std::ops::Range<usize>,
+    paint: Paint,
+    outer: egui::epaint::Marginf,
+}
 struct Block {
+    align: egui::Align,
+    inset: egui::epaint::Marginf,
     heading: u8,
     cell: Option<Cell>,
     parts: Vec<Piece>,
@@ -99,6 +108,7 @@ pub struct Document {
     path: PathBuf,
     snapshot: Snapshot,
     blocks: Vec<Block>,
+    outlines: Vec<Outline>,
     paper: egui::Color32,
     files: assets::Files,
     pub trusted: bool,
@@ -245,10 +255,12 @@ impl Document {
         let styles = layout.blocked;
         let paper = layout.paper;
         let blocks = layout.blocks;
+        let outlines = layout.outlines;
         Ok(Self {
             path,
             snapshot,
             blocks,
+            outlines,
             files,
             paper,
             trusted: false,
@@ -261,7 +273,13 @@ impl Document {
             .inner_margin(6)
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
-                layout::draw(ui, &self.blocks, &mut self.files, self.trusted && ready)
+                draw::draw(
+                    ui,
+                    &self.blocks,
+                    &self.outlines,
+                    &mut self.files,
+                    self.trusted && ready,
+                )
             })
             .inner
     }
@@ -396,53 +414,170 @@ mod render_tests {
         assert_eq!(page.blocks.iter().filter(|b| b.cell.is_some()).count(), 4);
         page.trusted = true;
         let ctx = egui::Context::default();
-        let mut interact = None;
-        let mut frame = |events| {
-            ctx.run(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        egui::vec2(500., 250.),
-                    )),
-                    events,
-                    ..Default::default()
-                },
-                |ctx| {
-                    egui::CentralPanel::default().show(ctx, |ui| {
-                        interact = page.draw(ui, true);
-                    });
-                },
-            )
-        };
-        frame(vec![]);
-        let view = frame(vec![]);
-        let point = view
-            .shapes
-            .iter()
-            .find_map(|s| match &s.shape {
-                egui::Shape::Text(t) if t.galley.job.text == "Run" => {
-                    Some(t.visual_bounding_rect().center())
-                }
-                _ => None,
-            })
-            .expect("rendered anchor glyphs");
-        for pressed in [true, false] {
-            frame(vec![
-                egui::Event::PointerMoved(point),
-                egui::Event::PointerButton {
-                    pos: point,
-                    button: egui::PointerButton::Primary,
-                    pressed,
-                    modifiers: egui::Modifiers::NONE,
-                },
-            ]);
-        }
-        let Some(Tag::Action(b, p)) = interact else {
-            panic!("a real click on the label must activate the anchor")
+        render(&mut page, &ctx, vec![]);
+        let (view, _) = render(&mut page, &ctx, vec![]);
+        let point = label_rect(&view, "Run").center();
+        let Some(Tag::Action(b, p)) = click(&mut page, &ctx, point) else {
+            panic!("a real click on the label must activate the anchor");
         };
         assert_eq!(page.activate(b, p).unwrap(), "print(42)");
         fs::write(css, "a {display:none}").unwrap();
         assert!(page.activate(b, p).is_err() && !page.trusted);
+    }
+    fn render(
+        page: &mut Document,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+    ) -> (egui::FullOutput, Option<Tag>) {
+        let mut tag = None;
+        let out = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(500., 540.),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| tag = page.draw(ui, true));
+            },
+        );
+        (out, tag)
+    }
+    fn label_rect(view: &egui::FullOutput, name: &str) -> egui::Rect {
+        view.shapes
+            .iter()
+            .find_map(|s| match &s.shape {
+                egui::Shape::Text(t) if t.galley.job.text == name => Some(t.visual_bounding_rect()),
+                _ => None,
+            })
+            .unwrap()
+    }
+
+    fn click(page: &mut Document, ctx: &egui::Context, pos: egui::Pos2) -> Option<Tag> {
+        let mut result = None;
+        for pressed in [true, false] {
+            result = render(
+                page,
+                ctx,
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            )
+            .1;
+        }
+        result
+    }
+    #[test]
+    fn aligns_inline_content_and_table_cells_with_click_targets_inside_the_borders() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("aligned.html");
+        image::RgbaImage::from_pixel(16, 12, image::Rgba([250, 25, 0, 255]))
+            .save(d.path().join("test.png"))
+            .unwrap();
+        fs::write(&p, r#"<style>
+           body {text-align:center} div {border:2px solid red}
+           h2 {border-left:6px solid blue; border-bottom:2px dotted green}
+           td {border:1px solid blue} .right {text-align:right}
+           </style><body><div><p align=left>Left</p><h2>Center</h2>
+           <p class=right>Label <a href='mtkp://print(42)'>Run</a></p>
+           <table><tr><td align=left>LeftCell</td><td>MidCell</td><td class=right>RightCell</td></tr></table>
+           <img src="test.png" style="border:2px solid #ff00ff">
+           <p style="text-align:right"><a href="mtkp://print(2)">A long linked paragraph that will wrap across a few lines with a short final word to test the empty clickable area</a></p></div>"#).unwrap();
+        let mut page = Document::open(p).unwrap();
+        assert!(!page.styles);
+        let ctx = egui::Context::default();
+        render(&mut page, &ctx, vec![]);
+        let (view, _) = render(&mut page, &ctx, vec![]);
+        let left = label_rect(&view, "Left");
+        let center = label_rect(&view, "Center");
+        let link = label_rect(&view, "Run");
+        assert!(
+            left.left() < 35. && (center.center().x - 250.).abs() < 5. && link.right() > 463.,
+            "{left:?} {center:?} {link:?}"
+        );
+        assert!(label_rect(&view, "Label").right() < link.left());
+        assert!(label_rect(&view, "LeftCell").left() < 35.);
+        assert!((label_rect(&view, "MidCell").center().x - 250.).abs() < 5.);
+        assert!(label_rect(&view, "RightCell").right() > 463.);
+        let strokes: Vec<_> = view
+            .shapes
+            .iter()
+            .filter_map(|s| match &s.shape {
+                egui::Shape::LineSegment { stroke, .. } => Some(stroke),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            strokes
+                .iter()
+                .filter(|s| s.color == egui::Color32::RED)
+                .count(),
+            4
+        );
+        assert!(strokes
+            .iter()
+            .any(|s| s.width == 6. && s.color == egui::Color32::BLUE));
+        let pink = egui::Color32::from_rgb(255, 0, 255);
+        let image_border: Vec<_> = view
+            .shapes
+            .iter()
+            .filter_map(|s| match &s.shape {
+                egui::Shape::LineSegment { points, stroke } if stroke.color == pink => Some(points),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(image_border.len(), 4);
+        assert!((image_border[0][1].x - image_border[0][0].x - 18.).abs() < 0.1);
+        let dots = view.shapes.iter().filter(|s| {
+            matches!(&s.shape, egui::Shape::Circle(c) if c.fill==egui::Color32::from_rgb(0,128,0))
+        }).count();
+        assert!(dots > 5);
+        assert!(click(&mut page, &ctx, link.center()).is_none());
+        page.trusted = true;
+        render(&mut page, &ctx, vec![]);
+        assert!(click(
+            &mut page,
+            &ctx,
+            egui::pos2(left.center().x, link.center().y)
+        )
+        .is_none());
+        let wrapped = view
+            .shapes
+            .iter()
+            .find_map(|s| match &s.shape {
+                egui::Shape::Text(text) if text.galley.job.text.starts_with("A long linked") => {
+                    Some(text)
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert!(wrapped.galley.rows.len() > 1);
+        let last = wrapped
+            .galley
+            .rows
+            .last()
+            .unwrap()
+            .rect
+            .translate(wrapped.pos.to_vec2());
+        let blank = egui::pos2(wrapped.visual_bounding_rect().left() + 2., last.center().y);
+        assert!(blank.x < last.left());
+        assert!(click(&mut page, &ctx, blank).is_none());
+        let Some(Tag::Action(b, p)) = click(&mut page, &ctx, last.center()) else {
+            panic!("wrapped link did not receive the click")
+        };
+        assert_eq!(page.activate(b, p).unwrap(), "print(2)");
+        let Some(Tag::Action(b, p)) = click(&mut page, &ctx, link.center()) else {
+            panic!("aligned link did not receive the click")
+        };
+        assert_eq!(page.activate(b, p).unwrap(), "print(42)");
     }
     #[test]
     fn unresolved_css_and_unverified_visibility_disable_execution() {
@@ -468,7 +603,7 @@ mod render_tests {
     #[ignore = "requires the original Plus 1.5.4 ui/index.html"]
     fn original_cp932_styled_panel_keeps_the_five_main_frame_actions() {
         let p = PathBuf::from(std::env::var_os("MITAKA_TEST_HTML").unwrap());
-        let page = Document::open(p).unwrap();
+        let mut page = Document::open(p).unwrap();
         assert!(!page.styles && !page.trusted);
         let labels = links(&page).into_iter().map(|l| l.2).collect::<Vec<_>>();
         assert_eq!(
@@ -482,5 +617,15 @@ mod render_tests {
             ]
         );
         assert_eq!(page.files.images.len(), 3);
+        let ctx = egui::Context::default();
+        render(&mut page, &ctx, vec![]);
+        let (view, _) = render(&mut page, &ctx, vec![]);
+        let has_heading_border = view.shapes.iter().any(|s| match &s.shape {
+            egui::Shape::LineSegment { stroke, .. } => {
+                stroke.width == 6. && stroke.color == egui::Color32::from_gray(102)
+            }
+            _ => false,
+        });
+        assert!(has_heading_border);
     }
 }

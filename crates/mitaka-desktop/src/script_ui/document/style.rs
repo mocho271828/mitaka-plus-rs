@@ -1,8 +1,10 @@
 //! 静的文書で解釈する CSS。未知の表示規則がある文書は読み取り専用とする。
+use super::border::Borders;
 use cssparser::{
     AtRuleParser, CowRcStr, DeclarationParser, ParseError, Parser, ParserInput, ParserState,
     QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser, StyleSheetParser,
 };
+use eframe::egui::Align;
 use eframe::egui::Color32;
 use scraper::{ElementRef, Selector};
 
@@ -15,6 +17,8 @@ pub(super) struct Paint {
     pub italic: bool,
     pub underline: bool,
     pub hidden: bool,
+    pub align: Option<Align>,
+    pub borders: Borders,
 }
 #[derive(Default, Clone)]
 struct Patch {
@@ -25,6 +29,8 @@ struct Patch {
     italic: Option<bool>,
     underline: Option<bool>,
     hidden: bool,
+    align: Option<Align>,
+    borders: Borders,
 }
 impl Patch {
     fn apply(&self, v: &mut Paint) {
@@ -46,6 +52,8 @@ impl Patch {
         if let Some(b) = self.underline {
             v.underline = b
         }
+        v.align = self.align.or(v.align);
+        self.borders.apply(&mut v.borders);
         v.hidden |= self.hidden;
     }
     fn set(&mut self, key: &str, raw: &str) -> bool {
@@ -127,7 +135,11 @@ impl Patch {
                     .any(|a| metric(a).is_some_and(|n| n == 0.));
             }
             "font-family" | "clear" | "background-repeat" | "list-style-image"
-            | "list-style-type" | "text-align" => {}
+            | "list-style-type" => {}
+            "text-align" => match align(&v) {
+                Some(a) => self.align = Some(a),
+                None => return false,
+            },
             k if k == "padding"
                 || k.starts_with("padding-")
                 || k == "margin"
@@ -138,7 +150,7 @@ impl Patch {
                     return false;
                 }
             }
-            k if k == "border" || k.starts_with("border-") => {}
+            k if k == "border" || k.starts_with("border-") => return self.borders.set(k, &v),
             _ => return false,
         }
         true
@@ -157,7 +169,15 @@ fn metrics(v: &str) -> Option<()> {
             .all(|s| s == "auto" || metric(s).is_some()))
     .then_some(())
 }
-fn color(v: &str) -> Option<Color32> {
+fn align(value: &str) -> Option<Align> {
+    match value {
+        "left" | "start" => Some(Align::LEFT),
+        "center" => Some(Align::Center),
+        "right" | "end" => Some(Align::RIGHT),
+        _ => None,
+    }
+}
+pub(super) fn color(v: &str) -> Option<Color32> {
     let s = v.strip_prefix('#');
     let n = match s {
         Some(s) if s.len() == 3 => {
@@ -287,7 +307,11 @@ impl Styles {
                         .all(|s| s == "visited" || s == "hover")
                 {
                     // 擬似状態で表示可否が変わるリンクを、常時実行可にしない。
-                    self.blocked |= style.hidden || style.size.is_some() || style.bg.is_some();
+                    self.blocked |= style.hidden
+                        || style.size.is_some()
+                        || style.bg.is_some()
+                        || style.align.is_some()
+                        || style.borders.margin() != Default::default();
                     let base = sel.split(':').next().unwrap_or_default();
                     if !base.is_empty()
                         && base.len() <= 128
@@ -331,6 +355,18 @@ impl Styles {
         self.rules.sort_by_key(|r| r.0);
     }
     pub fn paint(&self, e: ElementRef<'_>, mut parent: Paint) -> (Paint, bool) {
+        parent.borders = Borders::default();
+        if let Some(a) = e
+            .value()
+            .attr("align")
+            .and_then(|s| align(&s.to_ascii_lowercase()))
+        {
+            parent.align = Some(a);
+        } else if e.value().name() == "center"
+            || (e.value().name() == "th" && parent.align.is_none())
+        {
+            parent.align = Some(Align::Center);
+        }
         for (_, selector, rule) in &self.rules {
             if selector.matches(&e) {
                 rule.apply(&mut parent)
