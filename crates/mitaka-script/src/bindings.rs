@@ -140,6 +140,7 @@ pub const FIELDS: &[Field] = &[
     field("Planets", "topoAmplification", "topoAmplification", 86, Index(5)),
     field("Planets", "atmosphere", "atmosphereMode", 71, Index(2)),
     field("GUI", "fullScreen", "fullScreen", 41, Bool),
+    field("Milkyway", "type", "milkyWay", 21, Text),
     field("Targets", "selectMode", "targetSelectionMode", 106, Index(2)),
 ];
 

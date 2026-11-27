@@ -60,7 +60,7 @@ impl Chart<'_> {
             let fraction = i as f32 / 192.;
             let longitude = ((f64::from(fraction) - 0.5) * 360. / self.camera.zoom).to_radians();
             let (sr, cr) = self.camera.roll.to_radians().sin_cos();
-            let a = longitude.cos() * tilt.sin() - longitude.sin() * sr * tilt.cos();
+            let a = longitude.cos() * tilt.sin() + longitude.sin() * sr * tilt.cos();
             let b = tilt.cos() * cr;
             let altitude = if b >= 0. { (-a).atan2(b) } else { a.atan2(-b) }.to_degrees();
             let y = self.rect.center().y

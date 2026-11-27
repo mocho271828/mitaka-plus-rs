@@ -15,7 +15,7 @@ macro_rules! flags {
         }
         pub fn snapshot(&self,mut reply:Value)->Value{
             $(reply[$host]=json!(self.$field);)+
-            reply["starBrightness"]=json!(self.brightness);reply["starMarking"]=json!(MARKS[self.marking as usize]);reply["landscape"]=json!(self.landscape);reply
+            reply["starBrightness"]=json!(self.brightness);reply["starMarking"]=json!(MARKS[self.marking as usize]);reply["landscape"]=json!(self.landscape);reply["milkyWay"]=json!(self.milky_way.name());reply
         }
         fn flag(&mut self,kind:u64)->Option<&mut bool>{
             match kind{$($kind=>Some(&mut self.$field),)+83=>Some(&mut self.landscape),_=>None}
@@ -34,6 +34,13 @@ impl LayerOptions {
     pub fn action(&mut self, kind: u64, msg: &Value) -> Result<bool, String> {
         if let Some(flag) = self.flag(kind) {
             *flag = msg["enabled"].as_bool().ok_or("真偽値が必要です")?;
+            return Ok(true);
+        }
+        if kind == 21 {
+            self.milky_way = super::background::Mode::ALL
+                .into_iter()
+                .find(|mode| msg["text"].as_str() == Some(mode.name()))
+                .ok_or("未知の天の川表示")?;
             return Ok(true);
         }
         if kind == 22 {
@@ -58,6 +65,7 @@ impl LayerOptions {
     }
     pub fn save(&self, v: &mut Value, data: &SkyData) {
         self.write_flags(v);
+        v["milky_way_mode"] = json!(self.milky_way as u8);
         v["stars"]["brightness"] = json!(self.brightness);
         v["stars"]["marking"] = json!(self.marking);
         v["selected_star_name_hips"] = match &self.selected {
@@ -81,6 +89,13 @@ impl LayerOptions {
     pub fn restore(v: &Value, data: &SkyData) -> io::Result<Self> {
         let mut out = Self::default();
         out.read_flags(v)?;
+        let mode = v["milky_way_mode"]
+            .as_f64()
+            .ok_or_else(|| io::Error::other("天の川モードがありません"))?;
+        out.milky_way = super::background::Mode::ALL
+            .into_iter()
+            .find(|m| f64::from(*m as u8) == mode)
+            .ok_or_else(|| io::Error::other("天の川モードが範囲外です"))?;
         // 呼出元の Session::read は全フィールドの必須性・型・数値範囲を確認済み。
         out.marking = v["stars"]["marking"].as_f64().unwrap() as u8;
         out.brightness = v["stars"]["brightness"].as_f64().unwrap() as f32;
