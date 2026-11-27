@@ -52,7 +52,7 @@ enum Key {
 enum Store {
     Static,
     Small(small_body::Dataset),
-    Satellites(mitaka_core::satellite_catalog::Dataset),
+    Satellites(super::satellite::Satellites),
     Craft(super::spacecraft::Craft),
     Sdss(&'static str, Vec<SdssRecord>),
 }
@@ -171,12 +171,7 @@ impl Catalog {
                         .map(|d| format!("{} 行 {} · {}", d.source, d.line, d.message)),
                 );
                 for (s, src) in dataset.sources.iter().enumerate() {
-                    for (i, r) in src
-                        .records
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, r)| r.block == "Satellite")
-                    {
+                    for r in src.records.iter().filter(|r| r.block == "Satellite") {
                         let parent = r
                             .parent
                             .and_then(|p| src.records.get(p))
@@ -190,11 +185,14 @@ impl Catalog {
                         rows.push(Entry::new(
                             format!("{title}　({parent})"),
                             format!("{} · 行 {}", src.key, r.line),
-                            Key::Satellite(s, i),
+                            Key::Satellite(s, r.ordinal),
                         ));
                     }
                 }
-                Store::Satellites(dataset)
+                Store::Satellites(super::satellite::Satellites::prepare(
+                    &dataset,
+                    &mut warnings,
+                ))
             }
             Kind::Spacecraft => {
                 let craft = super::spacecraft::Craft::load(root);
@@ -284,6 +282,41 @@ impl Catalog {
                 .collect(),
         )
     }
+    pub(super) fn craft_path(&self, i: usize) -> Option<&[mitaka_core::spacecraft::Sample]> {
+        match (&self.store, &self.rows.get(i)?.target) {
+            (Store::Craft(c), Key::Craft(id)) => Some(c.trajectory(*id).ok()?.samples()),
+            _ => None,
+        }
+    }
+    pub(super) fn small_path(&self, i: usize, jd: f64) -> Option<Vec<Option<[f64; 3]>>> {
+        let (Store::Small(d), Key::Small(src, r)) = (&self.store, &self.rows.get(i)?.target) else {
+            return None;
+        };
+        let record = &d.sources[*src].records[*r];
+        let dates = match record.orbit {
+            small_body::Orbit::Mean(e) if e.eccentricity < 1. => {
+                let phase = e.mean_anomaly_deg.rem_euclid(360.);
+                let period = 360. / e.mean_motion_deg_per_day;
+                let first = e.epoch_jd - phase / e.mean_motion_deg_per_day;
+                (0..=180)
+                    .map(|i| {
+                        let angle = std::f64::consts::TAU * f64::from(i) / 180.;
+                        first
+                            + period * (angle - e.eccentricity * angle.sin())
+                                / std::f64::consts::TAU
+                    })
+                    .collect::<Vec<_>>()
+            }
+            small_body::Orbit::Perihelion(_) => {
+                (0..=180).map(|i| jd + f64::from(i) - 90.).collect()
+            }
+            _ => return None,
+        };
+        if dates.windows(2).any(|p| !p[0].is_finite() || p[1] <= p[0]) {
+            return None;
+        }
+        Some(dates.into_iter().map(|t| record.position(t).ok()).collect())
+    }
     pub(super) fn locate(&self, i: usize, sky: &SkyData, jd: f64) -> io::Result<Position> {
         if let Store::Sdss(_, rows) = &self.store {
             let r = rows.get(i).ok_or_else(|| error("記録が見つかりません"))?;
@@ -306,10 +339,9 @@ impl Catalog {
             (Store::Small(set), Key::Small(s, r)) => {
                 Position::solar(set.sources[*s].records[*r].position(jd)?, 0.10)
             }
-            (Store::Satellites(set), Key::Satellite(s, r)) => Position::solar(
-                super::satellite::position(set, *s, *r, &sky.ephemeris, jd)?,
-                0.001,
-            ),
+            (Store::Satellites(set), Key::Satellite(s, r)) => {
+                Position::solar(set.position(*s, *r, &sky.ephemeris, jd)?, 0.001)
+            }
             (Store::Craft(c), Key::Craft(i)) => c.position(*i, jd),
             _ => Err(error("天体の位置参照が一致しません")),
         }

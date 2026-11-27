@@ -20,6 +20,7 @@ enum Scene {
     Mars,
     Galaxy,
     ObjectBrowser,
+    SpacecraftPaths,
 }
 impl Scene {
     fn name(self) -> &'static str {
@@ -33,6 +34,7 @@ impl Scene {
             Self::Mars => "mars",
             Self::Galaxy => "galaxy",
             Self::ObjectBrowser => "object-browser",
+            Self::SpacecraftPaths => "spacecraft-paths",
         }
     }
 }
@@ -60,6 +62,7 @@ impl Smoke {
                     Scene::Mars,
                     Scene::Galaxy,
                     Scene::ObjectBrowser,
+                    Scene::SpacecraftPaths,
                 ],
                 index: 0,
                 entered: false,
@@ -106,6 +109,17 @@ impl Smoke {
                 println!("{} height_m={:.2}", scene.name(), ground.central_height);
                 app.surface = Some(ground);
                 app.view = View::Surface;
+            }
+            Scene::SpacecraftPaths => {
+                if !data
+                    .root
+                    .parent()
+                    .is_some_and(|p| p.join("spacecraft/Voyager_I.pth").is_file())
+                {
+                    return Ok(false);
+                }
+                app.objects.inspect_voyager(data)?;
+                app.view = View::Solar;
             }
             Scene::ObjectBrowser => {
                 if !data.root.join("star_names_HIP.dat").try_exists()? {
@@ -154,6 +168,9 @@ impl Smoke {
             return Err(io::Error::other(
                 "シリウスに対応するHIP 32349へ視点が移りません",
             ));
+        }
+        if scene == Scene::SpacecraftPaths && app.view != View::Solar {
+            return Err(io::Error::other("探査機位置へ視点が移りません"));
         }
         if !self.waiting {
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::new(
