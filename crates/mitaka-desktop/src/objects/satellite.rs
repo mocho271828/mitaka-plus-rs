@@ -4,7 +4,7 @@ use mitaka_core::{
     satellite_catalog::{Dataset, SourceKind},
     satellite_model::{Model, Snapshot},
 };
-use std::{cell::RefCell, collections::HashMap, io};
+use std::{cell::RefCell, collections::HashMap, io, sync::Arc};
 
 struct SourceModel {
     model: Model,
@@ -35,13 +35,13 @@ impl Satellites {
         }
         Self(systems)
     }
-    pub(super) fn position(
+    fn with_snapshot<T>(
         &self,
         source: usize,
-        ordinal: usize,
         system: &Cf96Ephemeris,
         jd: f64,
-    ) -> io::Result<[f64; 3]> {
+        accept: impl FnOnce(&Snapshot) -> io::Result<T>,
+    ) -> io::Result<T> {
         let model = self
             .0
             .get(&source)
@@ -50,9 +50,24 @@ impl Satellites {
         if cache.as_ref().is_none_or(|s| s.jd != jd) {
             *cache = Some(model.model.evaluate(system, jd)?);
         }
-        cache
-            .as_ref()
-            .expect("上で同時刻の位置を評価する")
-            .position_au(ordinal)
+        accept(cache.as_ref().expect("上で同時刻の位置を評価する"))
+    }
+    pub(super) fn position(
+        &self,
+        source: usize,
+        ordinal: usize,
+        system: &Cf96Ephemeris,
+        jd: f64,
+    ) -> io::Result<[f64; 3]> {
+        self.with_snapshot(source, system, jd, |s| s.position_au(ordinal))
+    }
+    pub(super) fn path(
+        &self,
+        source: usize,
+        ordinal: usize,
+        system: &Cf96Ephemeris,
+        jd: f64,
+    ) -> io::Result<Arc<[[f64; 3]]>> {
+        self.with_snapshot(source, system, jd, |s| s.orbit_au(ordinal))
     }
 }

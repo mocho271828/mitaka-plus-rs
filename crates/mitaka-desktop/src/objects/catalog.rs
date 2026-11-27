@@ -62,6 +62,19 @@ pub(super) struct Catalog {
     rows: Vec<Entry>,
     store: Store,
     pub warnings: Vec<String>,
+    paths: std::cell::RefCell<PathCache>,
+    positions: std::cell::RefCell<Positions>,
+}
+type OrbitPath = std::sync::Arc<[Option<[f64; 3]>]>;
+#[derive(Default)]
+struct PathCache {
+    sampling: super::display::Sampling,
+    paths: std::collections::HashMap<usize, Option<OrbitPath>>,
+}
+#[derive(Default)]
+struct Positions {
+    jd: Option<f64>,
+    positions: std::collections::HashMap<usize, Option<[f64; 3]>>,
 }
 impl Catalog {
     pub(super) fn load(kind: Kind, root: &Path) -> io::Result<Self> {
@@ -217,7 +230,35 @@ impl Catalog {
             rows,
             store,
             warnings,
+            paths: Default::default(),
+            positions: Default::default(),
         })
+    }
+    pub(super) fn group(&self, i: usize) -> Option<usize> {
+        match (&self.store, &self.rows.get(i)?.target) {
+            (Store::Small(d), Key::Small(s, r)) => Some(match d.sources[*s].records[*r].kind {
+                small_body::Kind::Asteroid => 0,
+                small_body::Kind::TransNeptunian => 1,
+                small_body::Kind::Comet => 2,
+            }),
+            (Store::Satellites(_), Key::Satellite(..)) => Some(3),
+            (Store::Craft(_), Key::Craft(_)) => Some(4),
+            _ => None,
+        }
+    }
+    pub(super) fn scene_point(&self, i: usize, sky: &SkyData, jd: f64) -> Option<[f64; 3]> {
+        let mut cache = self.positions.borrow_mut();
+        if cache.jd != Some(jd) {
+            cache.positions.clear();
+            cache.jd = Some(jd);
+        }
+        *cache
+            .positions
+            .entry(i)
+            .or_insert_with(|| match self.locate(i, sky, jd) {
+                Ok(Position::Solar(p, _)) => Some(p),
+                _ => None,
+            })
     }
     pub(super) fn identity(&self, i: usize) -> Option<(&super::selections::Source, usize)> {
         let (s, ord) = match self.rows.get(i)?.target {
@@ -330,13 +371,42 @@ impl Catalog {
                 .collect(),
         )
     }
+    pub(super) fn satellite_path(
+        &self,
+        i: usize,
+        system: &mitaka_core::ephemeris::Cf96Ephemeris,
+        jd: f64,
+    ) -> Option<std::sync::Arc<[[f64; 3]]>> {
+        match (&self.store, &self.rows.get(i)?.target) {
+            (Store::Satellites(sat), Key::Satellite(source, ordinal)) => {
+                sat.path(*source, *ordinal, system, jd).ok()
+            }
+            _ => None,
+        }
+    }
     pub(super) fn craft_path(&self, i: usize) -> Option<&[mitaka_core::spacecraft::Sample]> {
         match (&self.store, &self.rows.get(i)?.target) {
             (Store::Craft(c), Key::Craft(id)) => Some(c.trajectory(*id).ok()?.samples()),
             _ => None,
         }
     }
-    pub(super) fn small_path(&self, i: usize, jd: f64) -> Option<Vec<Option<[f64; 3]>>> {
+    pub(super) fn small_path(
+        &self,
+        i: usize,
+        sampling: super::display::Sampling,
+    ) -> Option<OrbitPath> {
+        let mut cache = self.paths.borrow_mut();
+        if cache.sampling != sampling {
+            cache.paths.clear();
+            cache.sampling = sampling;
+        }
+        cache
+            .paths
+            .entry(i)
+            .or_insert_with(|| self.build_small_path(i, sampling))
+            .clone()
+    }
+    fn build_small_path(&self, i: usize, sampling: super::display::Sampling) -> Option<OrbitPath> {
         let (Store::Small(d), Key::Small(src, r)) = (&self.store, &self.rows.get(i)?.target) else {
             return None;
         };
@@ -346,18 +416,21 @@ impl Catalog {
                 let phase = e.mean_anomaly_deg.rem_euclid(360.);
                 let period = 360. / e.mean_motion_deg_per_day;
                 let first = e.epoch_jd - phase / e.mean_motion_deg_per_day;
-                (0..=180)
+                (0..sampling.count)
                     .map(|i| {
-                        let angle = std::f64::consts::TAU * f64::from(i) / 180.;
+                        let angle = std::f64::consts::TAU * i as f64 / (sampling.count - 1) as f64;
                         first
                             + period * (angle - e.eccentricity * angle.sin())
                                 / std::f64::consts::TAU
                     })
                     .collect::<Vec<_>>()
             }
-            small_body::Orbit::Perihelion(_) => {
-                (0..=180).map(|i| jd + f64::from(i) - 90.).collect()
-            }
+            small_body::Orbit::Perihelion(_) => (0..sampling.count)
+                .map(|i| {
+                    sampling.first
+                        + (sampling.last - sampling.first) * i as f64 / (sampling.count - 1) as f64
+                })
+                .collect(),
             _ => return None,
         };
         if dates.windows(2).any(|p| !p[0].is_finite() || p[1] <= p[0]) {
@@ -450,6 +523,8 @@ mod tests {
     #[test]
     fn sdss_identifiers_keep_source_ordinals_and_never_wrap() {
         let c = Catalog {
+            paths: Default::default(),
+            positions: Default::default(),
             rows: vec![],
             sources: Default::default(),
             store: Store::Sdss(

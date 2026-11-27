@@ -1,6 +1,7 @@
 //! Builds one empty registration container per native system source. CF96 binding,
 //! structural parents and named pair corrections follow Mitaka_plus f9fe624,
 //! satellite_{registration,model,absolute}.cpp and satellite_browser_model.mm.
+mod orbit;
 use crate::{
     astronomy::{Vector3, j2000_equatorial_to_ecliptic},
     ephemeris::Cf96Ephemeris,
@@ -8,7 +9,8 @@ use crate::{
     satellite::{RotationInput, legacy_parent_pole, relative_position_km, satellite_rotation},
     satellite_catalog::{Dataset, SourceKind},
 };
-use std::io;
+use orbit::Ellipse;
+use std::{collections::HashMap, io, sync::Arc};
 pub const KM_PER_AU: f64 = 149_597_870.7;
 const EARTH_FRACTION: f64 = 0.012150584133256915;
 const PLUTO_FRACTION: f64 = 0.07407407407407407;
@@ -37,9 +39,23 @@ pub struct Model {
 pub struct Snapshot {
     pub jd: f64,
     positions: Vec<Result<Vector3, String>>,
+    orbits: HashMap<usize, Ellipse>,
     pub pair_corrected_ordinals: Vec<usize>,
 }
 impl Snapshot {
+    /// A closed 256-segment instantaneous orbit in heliocentric J2000 ecliptic AU.
+    /// Ordinals are local to this source. The analytic Moon has no Kepler ellipse.
+    pub fn orbit_au(&self, ordinal: usize) -> io::Result<Arc<[Vector3]>> {
+        let position = self.position_au(ordinal)?;
+        let orbit = self
+            .orbits
+            .get(&ordinal)
+            .ok_or_else(|| invalid("no instantaneous Kepler orbit for this definition"))?;
+        // A catalog can have many more entries than either of the two standard source files.
+        // Bound the point cache; large custom systems can still request every orbit.
+        orbit.path(self.jd, position, self.orbits.len() <= 1024)
+    }
+
     /// Input is the ordinal in the original system file, including system and sun blocks.
     pub fn position_au(&self, ordinal: usize) -> io::Result<Vector3> {
         self.positions
@@ -145,6 +161,7 @@ impl Model {
                 Err("no registered position for this definition".into());
                 self.record_count
             ],
+            orbits: HashMap::new(),
             pair_corrected_ordinals: Vec::new(),
         };
         for (i, &ordinal) in self.planet_ordinals.iter().enumerate() {
@@ -179,7 +196,7 @@ impl Model {
                 if name.is_empty() {
                     return Err(invalid("unresolved satellite identifier"));
                 }
-                let (parent, relative_au) = if name == b"Moon" {
+                let (parent, relative_au, ellipse) = if name == b"Moon" {
                     if !self.names_complete {
                         return Err(invalid("incomplete identifiers in Moon lookup"));
                     }
@@ -188,6 +205,7 @@ impl Model {
                         moon.as_ref()
                             .copied()
                             .map_err(|e| invalid(&e.to_string()))?,
+                        None,
                     )
                 } else {
                     let elements = rotations[idx]
@@ -195,12 +213,22 @@ impl Model {
                         .ok_or_else(|| invalid("unresolved satellite elements"))?;
                     let rotation = satellite_rotation(&rotations, idx, jd)?;
                     let relative = relative_position_km(elements, rotation, jd)?;
-                    (s.parent, relative.map(|v| v / KM_PER_AU))
+                    (
+                        s.parent,
+                        relative.map(|v| v / KM_PER_AU),
+                        Some((relative, rotation, elements)),
+                    )
                 };
                 let origin = snap.position_au(self.planet_ordinals[parent])?;
                 let p: Vector3 = std::array::from_fn(|axis| origin[axis] + relative_au[axis]);
                 if p.iter().any(|v| !v.is_finite()) {
                     return Err(invalid("absolute satellite position overflow"));
+                }
+                if let Some((relative, rotation, elements)) = ellipse {
+                    snap.orbits.insert(
+                        s.ordinal,
+                        Ellipse::new(origin, relative, rotation, elements),
+                    );
                 }
                 Ok(p)
             })();
@@ -233,6 +261,9 @@ impl Model {
                     Ok((a, b)) => {
                         snap.positions[parent] = Ok(a);
                         snap.positions[satellite] = Ok(b);
+                        if let Some(ellipse) = snap.orbits.get_mut(&satellite) {
+                            ellipse.factor = 1. - fraction;
+                        }
                         snap.pair_corrected_ordinals.extend([parent, satellite]);
                     }
                     Err(e) => {
