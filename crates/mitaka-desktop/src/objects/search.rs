@@ -224,8 +224,17 @@ mod tests {
             page(&groups, "star_names_HIP.dat", 0, &stop).unwrap().rows,
             vec![(Kind::Stars, 1)]
         );
+        // f9fe624 は「太陽」を種類名「太陽系」の部分一致としても扱う。
+        let solar_system: Vec<_> = (0..11).map(|i| (Kind::Planets, i)).collect();
+        for query in ["太陽", "太陽 planet", "太陽系", "planet"] {
+            assert_eq!(
+                page(&groups, query, 0, &stop).unwrap().rows,
+                solar_system,
+                "{query}"
+            );
+        }
         for (query, reference) in [
-            ("太陽 planet", (Kind::Planets, 0)),
+            ("Sun", (Kind::Planets, 0)),
             ("Ｓｕｎ", (Kind::Planets, 0)),
             ("月", (Kind::Planets, 10)),
             ("moon", (Kind::Planets, 10)),
@@ -235,7 +244,7 @@ mod tests {
             ("HIP 2 vega", (Kind::Stars, 1)),
         ] {
             let hits = page(&groups, query, 0, &stop).unwrap();
-            assert!(hits.rows.contains(&reference), "{query}");
+            assert_eq!(hits.rows, [reference], "{query}");
         }
         let first = page(&groups, "", 0, &stop).unwrap();
         let second = page(&groups, "", 500, &stop).unwrap();
