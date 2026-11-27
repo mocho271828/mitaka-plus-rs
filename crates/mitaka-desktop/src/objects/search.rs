@@ -219,6 +219,11 @@ mod tests {
             stars.search_rows(Kind::Stars),
         ];
         let stop = AtomicBool::new(false);
+        assert_eq!(page(&groups, "hip.dat", 0, &stop).unwrap().matches, 505);
+        assert_eq!(
+            page(&groups, "star_names_HIP.dat", 0, &stop).unwrap().rows,
+            vec![(Kind::Stars, 1)]
+        );
         for (query, reference) in [
             ("太陽 planet", (Kind::Planets, 0)),
             ("Ｓｕｎ", (Kind::Planets, 0)),
@@ -243,6 +248,31 @@ mod tests {
         assert_eq!(second.rows.len(), 16);
         stop.store(true, Ordering::Relaxed);
         assert!(page(&groups, "HIP", 0, &stop).is_none());
+    }
+
+    #[test]
+    fn searches_ngc_and_ic_by_source_without_matching_the_record_ordinal() {
+        let root = tempfile::tempdir().unwrap();
+        let mut ngc_record = [0; 21];
+        ngc_record[..2].copy_from_slice(&76i16.to_le_bytes());
+        ngc_record[2] = 1;
+        let mut ic_record = ngc_record;
+        ic_record[2] = 0;
+        std::fs::write(
+            root.path().join("ngc.dat"),
+            [ngc_record, ic_record].concat(),
+        )
+        .unwrap();
+        let catalog = Catalog::load(Kind::Ngc, root.path()).unwrap();
+        let groups = [catalog.search_rows(Kind::Ngc)];
+        let stop = AtomicBool::new(false);
+        for (query, expected) in [("NGC.DAT", 2), ("NGC", 1), ("ngc.dat 1", 0)] {
+            assert_eq!(
+                page(&groups, query, 0, &stop).unwrap().matches,
+                expected,
+                "{query}"
+            );
+        }
     }
 
     #[test]
