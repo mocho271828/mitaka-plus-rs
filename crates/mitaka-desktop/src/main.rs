@@ -39,7 +39,11 @@ type AppError = Box<dyn Error + Send + Sync>;
 const J2000: f64 = 2451545.;
 const UNIX_EPOCH_JD: f64 = 2440587.5;
 fn utc_date(jd: f64) -> Option<DateTime<Utc>> {
-    DateTime::from_timestamp(((jd - UNIX_EPOCH_JD) * 86400.).round() as i64, 0)
+    // 秒表示の丸めは同じ暦日内に収める。月末の23:59:59.75を翌月と表示しない。
+    let days = jd - UNIX_EPOCH_JD;
+    let midnight = days.floor();
+    let seconds = ((days - midnight) * 86400.).round().min(86399.);
+    DateTime::from_timestamp((midnight * 86400. + seconds) as i64, 0)
 }
 fn parse_utc(text: &str) -> Option<f64> {
     let date = NaiveDateTime::parse_from_str(text.trim(), "%Y-%m-%d %H:%M:%S").ok()?;

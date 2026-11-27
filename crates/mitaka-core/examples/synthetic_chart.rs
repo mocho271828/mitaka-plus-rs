@@ -31,7 +31,8 @@ fn main() -> io::Result<()> {
     cf.extend(9i32.to_le_bytes());
     for planet in 1..=9 {
         cf.extend(2451000f64.to_le_bytes());
-        cf.extend(2000f64.to_le_bytes());
+        // 月末ステップの実Lua試験で使う2024年3月までの定数暦表。
+        cf.extend(12000f64.to_le_bytes());
         for n in [0i32, 1, 1, 0] {
             cf.extend(n.to_le_bytes());
         }

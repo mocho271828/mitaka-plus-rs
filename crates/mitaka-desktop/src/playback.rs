@@ -160,7 +160,10 @@ fn stepped(
         return Ok(jd + f64::from(sign) * if step == 11 { custom } else { step_days });
     }
     let offset_days = f64::from(offset) / 1440.;
-    let dt = utc_date(jd + offset_days).ok_or("暦の範囲外です")?;
+    let local =
+        mitaka_core::astronomy::gregorian_date_time(jd + offset_days).map_err(|e| e.to_string())?;
+    let dt = NaiveDate::from_ymd_opt(local.year, local.month.into(), local.day.into())
+        .ok_or("暦の範囲外です")?;
     let months = Months::new([1, 12, 120, 1200][step - 7]);
     let base = if rollover {
         dt.with_day(1).ok_or("月初を求められません")?
@@ -436,10 +439,8 @@ impl App {
                             .selectable_label(date == local.date_naive(), day.to_string())
                             .clicked()
                         {
-                            let jd = UNIX_EPOCH_JD
-                                + date.and_time(local.time()).and_utc().timestamp() as f64 / 86400.
-                                - offset;
-                            self.set_date(jd);
+                            let days = (date - local.date_naive()).num_days();
+                            self.set_date(self.jd + days as f64);
                         }
                     } else {
                         ui.label("");
@@ -507,6 +508,36 @@ mod tests {
         assert_eq!(stepped(jd, 7, 0., 1, 0, false).unwrap(), jd + 29.);
         assert_eq!(stepped(jd, 7, 0., 1, 0, true).unwrap(), jd + 31.);
     }
+    #[test]
+    fn fractional_calendar_steps_use_the_original_civil_day() {
+        let near_midnight = |next: &str| super::super::parse_utc(next).unwrap() - 0.25 / 86400.;
+        let jan = near_midnight("2024-02-01 00:00:00");
+        assert_eq!(
+            stepped(jan, 7, 0., 1, 0, true).unwrap(),
+            near_midnight("2024-03-03 00:00:00")
+        );
+        assert_eq!(
+            stepped(jan, 7, 0., 1, 0, false).unwrap(),
+            near_midnight("2024-03-01 00:00:00")
+        );
+        let mar = near_midnight("2024-04-01 00:00:00");
+        assert_eq!(
+            stepped(mar, 7, 0., -1, 0, true).unwrap(),
+            near_midnight("2024-03-03 00:00:00")
+        );
+        let leap = near_midnight("2024-03-01 00:00:00");
+        assert_eq!(
+            stepped(leap, 8, 0., 1, 0, true).unwrap(),
+            near_midnight("2025-03-02 00:00:00")
+        );
+        assert_eq!(
+            stepped(leap, 8, 0., 1, 0, false).unwrap(),
+            near_midnight("2025-03-01 00:00:00")
+        );
+        // UTC+9 では既に3月1日なので、GUIの1か月送りは現地4月1日へ進む。
+        assert_eq!(stepped(leap, 7, 0., 1, 540, false).unwrap(), leap + 31.);
+    }
+
     #[test]
     fn clock_stops_on_sleep_and_at_range_edges() {
         let mut p = Playback::default();
