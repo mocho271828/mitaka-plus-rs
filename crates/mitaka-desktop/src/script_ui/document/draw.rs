@@ -83,9 +83,20 @@ enum Inline<'a> {
 }
 
 impl<'a> Inline<'a> {
-    fn layout(part: &'a Piece, block: &Block, ui: &egui::Ui, width: f32) -> Self {
+    fn layout(
+        part: &'a Piece,
+        block: &Block,
+        ui: &egui::Ui,
+        width: f32,
+        indent: f32,
+        mut add: impl FnMut(bool, Self),
+    ) {
         let (rich, link) = match part {
-            Piece::Image(i, size, paint) => return Self::Image(*i, *size, paint),
+            Piece::Image(i, size, paint) => {
+                let image = Self::Image(*i, *size, paint);
+                add(indent > 0. && indent + image.width() > width, image);
+                return;
+            }
             Piece::Text(text, paint) => (paint.rich(text, block.heading, false), None),
             Piece::Link {
                 label,
@@ -100,12 +111,44 @@ impl<'a> Inline<'a> {
             ui.text_valign(),
         );
         job.wrap.max_width = width;
-        job.halign = block.align;
-        let galley = ui.fonts(|f| f.layout_job(job));
-        match link {
+        let item = |galley| match link {
             Some(can_run) => Self::Link(galley, can_run),
             None => Self::Text(galley),
+        };
+        if block.parts.len() == 1 {
+            job.halign = block.align;
+            add(false, item(ui.fonts(|fonts| fonts.layout_job(job))));
+            return;
         }
+        // egui の水平折り返しと同様に、先行する要素の幅を先頭行だけに適用する。
+        job.sections[0].leading_space = indent;
+        let galley = ui.fonts(|fonts| fonts.layout_job(job));
+        if indent == 0. && galley.rows.len() == 1 {
+            add(false, item(galley));
+            return;
+        }
+        let mut add_rows = |new_line, rows: &[egui::epaint::text::Row]| {
+            if rows.is_empty() || rows[0].glyphs.is_empty() {
+                return;
+            }
+            let mut text = String::new();
+            for (i, row) in rows.iter().enumerate() {
+                if i > 0 {
+                    text.push('\n');
+                }
+                text.extend(row.glyphs.iter().map(|g| g.chr));
+            }
+            let mut job =
+                egui::text::LayoutJob::single_section(text, galley.job.sections[0].format.clone());
+            job.halign = block.align;
+            add(new_line, item(ui.fonts(|fonts| fonts.layout_job(job))));
+        };
+        // 隣の要素と行を共有する両端だけを分け、長文の中間行は一つのウィジェットで描く。
+        let last = galley.rows.len() - 1;
+        let first = usize::from(indent > 0. && last > 0);
+        add_rows(false, &galley.rows[..first]);
+        add_rows(first > 0, &galley.rows[first..last]);
+        add_rows(last > 0, &galley.rows[last..]);
     }
 
     fn width(&self) -> f32 {
@@ -176,31 +219,39 @@ fn draw_block(
         .show(ui, |ui| {
             ui.set_width(width);
             let spacing = ui.spacing().item_spacing.x;
-            let items: Vec<_> = block
-                .parts
-                .iter()
-                .map(|p| Inline::layout(p, block, ui, width))
-                .collect();
-            let mut start = 0;
-            while start < items.len() {
-                let mut end = start + 1;
-                let mut line = items[start].width().min(width);
-                while end < items.len() && line + spacing + items[end].width() <= width {
-                    line += spacing + items[end].width();
-                    end += 1;
-                }
+            let mut lines = Vec::new();
+            let mut line = Vec::new();
+            let mut used = 0.;
+            for (i, part) in block.parts.iter().enumerate() {
+                let indent = if line.is_empty() { 0. } else { used + spacing };
+                Inline::layout(part, block, ui, width, indent, |new_row, item| {
+                    if new_row && !line.is_empty() {
+                        lines.push((used, std::mem::take(&mut line)));
+                        used = 0.;
+                    }
+                    if !line.is_empty() {
+                        used += spacing;
+                    }
+                    used += item.width();
+                    line.push((i, item));
+                });
+            }
+            if !line.is_empty() {
+                lines.push((used, line));
+            }
+            ui.spacing_mut().item_spacing.y = 0.;
+            for (used, line) in lines {
                 ui.horizontal(|ui| {
-                    let offset = block.align.align_size_within_range(line, 0. ..=width).min;
+                    let offset = block.align.align_size_within_range(used, 0. ..=width).min;
                     if offset > 0. {
                         ui.add_space(offset);
                     }
-                    for (i, item) in items[start..end].iter().enumerate() {
-                        if let Some(tag) = item.draw(ui, files, trusted, (index, start + i)) {
+                    for (i, item) in line {
+                        if let Some(tag) = item.draw(ui, files, trusted, (index, i)) {
                             *selected = Some(tag);
                         }
                     }
                 });
-                start = end;
             }
         })
         .response
