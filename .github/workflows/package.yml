@@ -16,11 +16,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libx11-dev libx11-xcb-dev libxcb-shape0-dev libxcb-xfixes0-dev libwebkit2gtk-4.1-dev libdbus-1-dev
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libx11-dev libx11-xcb-dev libxcb-shape0-dev libxcb-xfixes0-dev libwebkit2gtk-4.1-dev libdbus-1-dev xvfb xauth pulseaudio pulseaudio-utils gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-pulseaudio
       - if: runner.os == 'macOS'
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - run: bash tools/package.sh
-      - name: Open synthetic catalogs from the packaged application
+      - name: Run the three executables extracted from the distribution
         shell: bash
         run: |
           cargo run --locked -p mitaka-core --example synthetic_chart -- package-test-data
@@ -33,6 +33,12 @@ jobs:
                      app="$RUNNER_TEMP/pkg/mitaka-plus/mitaka-plus.exe" ;;
           esac
           "$app" --inspect --data-root package-test-data
+          bin="$(dirname "$app")"
+          ext=
+          if [[ "$RUNNER_OS" == Windows ]]; then ext=.exe; fi
+          printf 'assert(_VERSION == "Lua 5.4"); print("packaged Lua ready")\n' > package-test-data/probe.lua
+          "$bin/mitaka-script$ext" package-test-data/probe.lua
+          bash tools/test-media-player.sh "$bin/mitaka-media$ext" --release
       - if: runner.os == 'Linux'
         run: bash tools/offline-source.sh
       - uses: actions/upload-artifact@v4
