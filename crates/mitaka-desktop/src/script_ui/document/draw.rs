@@ -10,6 +10,7 @@ pub(super) fn draw(
 ) -> Option<Tag> {
     let mut selected = None;
     let mut rects = Vec::with_capacity(blocks.len());
+    let mut row_bounds = std::collections::HashMap::new();
     let mut draw_blocks = |ui: &mut egui::Ui, group: &[Block]| {
         for block in group {
             let index = rects.len();
@@ -35,24 +36,41 @@ pub(super) fn draw(
             .spacing(egui::vec2(gap, 4.))
             .show(ui, |ui| {
                 for row in rows() {
+                    let mut bounds = egui::Rect::NOTHING;
                     for cell in row.chunk_by(|a, b| a.cell == b.cell) {
-                        ui.vertical(|ui| {
-                            ui.set_width(col_width);
-                            draw_blocks(ui, cell);
-                        });
+                        let cell_bounds = ui
+                            .vertical(|ui| {
+                                ui.set_width(col_width);
+                                draw_blocks(ui, cell);
+                            })
+                            .response
+                            .rect;
+                        bounds = bounds.union(cell_bounds);
                     }
+                    row_bounds.insert(row[0].cell.unwrap().row, bounds.y_range());
                     ui.end_row();
                 }
             });
     }
     for outline in outlines {
-        let bounds = rects[outline.blocks.clone()]
+        let mut bounds = rects[outline.blocks.clone()]
             .iter()
             .copied()
             .fold(egui::Rect::NOTHING, egui::Rect::union);
+        if let Some(row) = outline.cell_row.and_then(|id| row_bounds.get(&id)) {
+            bounds.min.y = row.min;
+            bounds.max.y = row.max;
+        }
+        // この要素を閉じた後、同じ境界に追加された祖先の枠だけを枠線の外に残す。
+        let outer = egui::epaint::Marginf {
+            left: outline.outer_left,
+            right: outline.outer_right,
+            top: blocks[outline.blocks.start].inset.top - outline.top_at_close,
+            bottom: blocks[outline.blocks.end - 1].inset.bottom - outline.bottom_at_close,
+        };
         outline.paint.borders.draw(
             ui,
-            bounds - outline.outer,
+            bounds - outer,
             outline.paint.fg.unwrap_or(egui::Color32::BLACK),
         );
     }
