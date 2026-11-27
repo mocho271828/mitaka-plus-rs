@@ -238,16 +238,15 @@ impl App {
             .motion
             .site
             .or(self.solar.flight_site)
-            .filter(|s| self.view == View::Solar && matches!(s.body, 3 | 4));
+            .filter(|s| self.view == View::Solar && surface::terrain_file(s.body).is_some());
         if let Some(s) = current.filter(|s| {
             self.surface
                 .as_ref()
                 .is_none_or(|g| !s.at_location(g.body, g.lat, g.lon))
         }) {
             if let Some(data) = &self.data {
-                self.surface = Some(surface::Surface::load_mode(
-                    &data.root, s.body, s.lat, s.lon, 100., mode,
-                )?);
+                self.surface =
+                    surface::Surface::load_optional(&data.root, s.body, s.lat, s.lon, mode)?;
             }
         }
         if let Some(surface) = &mut self.surface {

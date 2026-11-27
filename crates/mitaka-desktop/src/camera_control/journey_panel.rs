@@ -100,25 +100,15 @@ impl App {
             .data
             .as_ref()
             .ok_or_else(|| io::Error::other("天文データを開いてください"))?;
-        let mut terrain = None;
-        if matches!(dest.body, 3 | 4) {
-            let dir = if dest.body == 3 {
-                "earth_topo/earth_topo.dat"
-            } else {
-                "mars_topo/mars_topo.dat"
-            };
-            if data.root.join(dir).try_exists()? {
-                let mesh = Surface::load_mode(
-                    &data.root,
-                    dest.body,
-                    dest.lat,
-                    dest.lon,
-                    100.,
-                    self.terrain_amplification,
-                )?;
-                dest.terrain = mesh.landing_height_m(RADII_KM[dest.body]) / 1000.;
-                terrain = Some(mesh);
-            }
+        let terrain = Surface::load_optional(
+            &data.root,
+            dest.body,
+            dest.lat,
+            dest.lon,
+            self.terrain_amplification,
+        )?;
+        if let Some(mesh) = &terrain {
+            dest.terrain = mesh.landing_height_m(RADII_KM[dest.body]) / 1000.;
         }
         self.solar.prepare(&data.ephemeris, self.jd)?;
         let source = match self.view {

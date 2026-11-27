@@ -73,6 +73,17 @@ pub(crate) fn planet(system: &Cf96Ephemeris, index: usize, jd: f64) -> io::Resul
     };
     j2000_equatorial_to_ecliptic(position)
 }
+/// 太陽系ビューと同じ天体インデックスで地表の太陽中心黄道位置を返す。
+pub(crate) fn surface_center(system: &Cf96Ephemeris, body: usize, jd: f64) -> io::Result<Point> {
+    match body {
+        1..=9 => planet(system, body - 1, jd),
+        10 => Ok(plus(
+            planet(system, 2, jd)?,
+            j2000_equatorial_to_ecliptic(lunar_position(jd)?)?,
+        )),
+        _ => Err(io::Error::other("地表を持たない天体です")),
+    }
+}
 /// sky_model.cpp の地心月軌道を、描画時点の地球中心に移す。
 fn lunar_orbit(jd: f64, range: [f64; 2], earth: Point) -> io::Result<Vec<Point>> {
     const PERIOD_DAYS: f64 = 27.321661;
@@ -686,7 +697,7 @@ impl Solar {
         self.surfaces.begin_frame();
         self.surfaces.mode = terrain_mode;
         self.surfaces.preview = response.dragged() || self.surface_flight.is_some();
-        let nearest_terrain = [3, 4]
+        let nearest_terrain = [3, 4, 10, 1]
             .into_iter()
             .find(|&i| terrain::near(self.camera, scene.bodies[i], i));
         self.horizon_overlay = self

@@ -5,7 +5,7 @@ use image::{ImageReader, RgbImage};
 use mitaka_core::terrain::Amplification;
 use std::{collections::HashMap, path::Path};
 
-const NAMES: [&str; 11] = [
+pub(crate) const TEXTURE_NAMES: [&str; 11] = [
     "sun", "mercury", "venus", "earth", "mars", "jupiter", "saturn", "uranus", "neptune", "pluto",
     "moon",
 ];
@@ -92,7 +92,7 @@ struct Buffers<'a> {
 pub struct Surfaces {
     files: HashMap<&'static str, Result<RgbImage, String>>,
     cache: HashMap<usize, (Key, TextureHandle, Vec<f64>)>,
-    terrains: HashMap<usize, terrain::Source>,
+    terrains: HashMap<usize, Option<terrain::Source>>,
     pub(super) mode: Amplification,
     pub(super) preview: bool,
     drawn: Vec<usize>,
@@ -208,7 +208,7 @@ impl Surfaces {
             viewport: rect,
             tile,
         } = region;
-        self.get(NAMES[index], root);
+        self.get(TEXTURE_NAMES[index], root);
         if self.air == Air::Multiple && index == 3 && self.emission.is_none() {
             self.emission = Some(
                 EmissionMap::load(&root.join("emmap.dat"))
@@ -222,7 +222,7 @@ impl Surfaces {
             self.get("earth_lights", root);
         }
         let get = |name: &str| self.files.get(name).and_then(|v| v.as_ref().ok());
-        let map = get(NAMES[index]);
+        let map = get(TEXTURE_NAMES[index]);
         if map.is_none() && tile != rect {
             return Ok(false);
         }
@@ -261,10 +261,14 @@ impl Surfaces {
                 let slot = match self.terrains.entry(index) {
                     std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
                     std::collections::hash_map::Entry::Vacant(e) => {
-                        e.insert(terrain::Source::open(root, index)?)
+                        e.insert(match terrain::Source::open(root, index) {
+                            Ok(source) => Some(source),
+                            Err(err) if err.kind() == io::ErrorKind::NotFound => None,
+                            Err(err) => return Err(err),
+                        })
                     }
                 };
-                Some(slot)
+                slot.as_mut()
             } else {
                 None
             };

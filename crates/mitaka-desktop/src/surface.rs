@@ -1,10 +1,9 @@
-//! 地球・火星のファイルに格納された格子を、天体固定座標の局所表示に使う。
+//! 地形ファイルに格納された格子を、天体固定座標の局所表示に使う。
 //! 地点標高は最高段の双線形補間、着陸高度は描画段の三角形交点から求める。
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Stroke};
 use mitaka_core::{
-    astronomy::j2000_equatorial_to_ecliptic,
     ephemeris::Cf96Ephemeris,
-    lunar::{earth_center, lunar_position},
+    lunar::lunar_orientation,
     rotation::planet_orientation,
     terrain::{unit_direction, Amplification, Terrain},
 };
@@ -38,7 +37,35 @@ pub struct Surface {
     texture: Option<image::RgbaImage>,
     warning: Option<String>,
 }
+/// f9fe624 terrain_snapshot.cpp のデータディレクトリ相対パス。
+pub(crate) fn terrain_file(body: usize) -> Option<&'static str> {
+    match body {
+        1 => Some("mercury_topo.dat"),
+        3 => Some("earth_topo/earth_topo.dat"),
+        4 => Some("mars_topo/mars_topo.dat"),
+        10 => Some("moon_topo.dat"),
+        _ => None,
+    }
+}
+
 impl Surface {
+    pub(crate) fn load_optional(
+        root: &Path,
+        body: usize,
+        lat: f64,
+        lon: f64,
+        mode: Amplification,
+    ) -> io::Result<Option<Self>> {
+        if terrain_file(body).is_none() {
+            return Ok(None);
+        }
+        match Self::load_mode(root, body, lat, lon, 100., mode) {
+            Ok(mesh) => Ok(Some(mesh)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
     pub fn load(root: &Path, body: usize, lat: f64, lon: f64, span_km: f64) -> io::Result<Self> {
         Self::load_mode(root, body, lat, lon, span_km, Amplification::Actual)
     }
@@ -50,17 +77,15 @@ impl Surface {
         span_km: f64,
         mode: Amplification,
     ) -> io::Result<Self> {
-        let name = match body {
-            3 => "earth",
-            4 => "mars",
-            _ => return Err(io::Error::other("地形データは地球と火星に対応します")),
-        };
+        let file = terrain_file(body)
+            .ok_or_else(|| io::Error::other("この天体の地形データには対応していません"))?;
+        let name = crate::solar::sphere::TEXTURE_NAMES[body];
         if !span_km.is_finite() || !(0.1..=1000.).contains(&span_km) {
             return Err(io::Error::other(
                 "地表表示範囲は0.1〜1000 kmで指定してください",
             ));
         }
-        let mut data = Terrain::open(&root.join(format!("{name}_topo/{name}_topo.dat")))?;
+        let mut data = Terrain::open(&root.join(file))?;
         let central_height = data.elevation_m(lon, lat)?;
         let tex_path = root
             .parent()
@@ -126,17 +151,15 @@ impl Surface {
         (self.relief.landing_ratio - 1.) * display_radius_km * 1000.
     }
     fn sun(&self, eph: &Cf96Ephemeris, jd: f64) -> io::Result<Vector> {
-        let index = self.body - 1;
-        let state = eph.state(index, jd)?.position_au;
-        let center = if self.body == 3 {
-            earth_center(state, lunar_position(jd)?)
+        let c = crate::solar::surface_center(eph, self.body, jd)?;
+        let axes = if self.body == 10 {
+            lunar_orientation(jd)?
         } else {
-            state
+            planet_orientation(self.body - 1, jd)?
         };
-        let c = j2000_equatorial_to_ecliptic(center)?;
         let n = c[0].hypot(c[1]).hypot(c[2]);
         let sun = c.map(|v| -v / n);
-        Ok(planet_orientation(index, jd)?.map(|axis| dot(sun, axis)))
+        Ok(axes.map(|axis| dot(sun, axis)))
     }
     pub fn draw(&mut self, ui: &mut egui::Ui, eph: &Cf96Ephemeris, jd: f64) {
         let (res, painter) = ui.allocate_painter(ui.available_size(), egui::Sense::drag());
@@ -272,8 +295,10 @@ impl Relief {
                             sample(t, v.uv, body)
                         } else if body == 3 {
                             [100, 141, 107]
-                        } else {
+                        } else if body == 4 {
                             [175, 112, 84]
+                        } else {
+                            [150, 150, 150]
                         };
                         let id = out.vertices.len() as u32;
                         out.vertices.push(LocalVertex {

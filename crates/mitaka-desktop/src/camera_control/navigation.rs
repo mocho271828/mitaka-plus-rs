@@ -130,11 +130,24 @@ impl App {
                 .body_point(body)
                 .ok_or_else(|| io::Error::other("選択天体の位置がありません"))?,
         );
-        let from = if let Some(s) = self.motion.site.filter(|s| s.body == body) {
+        let mut from = if let Some(s) = self.motion.site.filter(|s| s.body == body) {
             s
         } else {
             Site::from_camera(body, center, self.jd, self.solar.camera, force)?
         };
+        if matches!(body, 1 | 10) {
+            let mesh = crate::surface::Surface::load_optional(
+                &data.root,
+                body,
+                from.lat,
+                from.lon,
+                self.terrain_amplification,
+            )?;
+            if let Some(ground) = &mesh {
+                from.update_terrain(ground.landing_height_m(RADII_KM[body]) / 1000.);
+            }
+            self.surface = mesh;
+        }
         self.solar.stop();
         self.motion.target = None;
         self.motion.place = None;
