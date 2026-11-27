@@ -5,6 +5,8 @@ const MIN_HORIZON_FOV: f64 = 1e-9;
 pub enum View {
     Sky,
     Horizon,
+    Solar,
+    Surface,
 }
 
 #[derive(Clone, Copy)]
@@ -75,6 +77,7 @@ impl Camera {
             View::Horizon => {
                 self.zoom_horizon_at(180. / self.zoom, factor, anchor);
             }
+            View::Solar | View::Surface => {}
         }
     }
     fn zoom_sky_at(&mut self, factor: f64, anchor: [f64; 2]) {

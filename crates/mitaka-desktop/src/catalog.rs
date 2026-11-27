@@ -58,13 +58,19 @@ impl SkyData {
             }
         }
         let ephemeris = Cf96Ephemeris::load(&root.join("cf96.dat"))?;
-        let mut date_range = ephemeris.time_range(0)?;
-        for i in 1..ephemeris.planet_count() {
+        if ephemeris.planet_count() != 9 {
+            return Err(io::Error::other("CF96は9天体を必要とします"));
+        }
+        let mut date_range = [
+            mitaka_core::lunar::LUNAR_MINIMUM_JD,
+            mitaka_core::lunar::LUNAR_MAXIMUM_JD,
+        ];
+        for i in 0..ephemeris.planet_count() {
             let [lo, hi] = ephemeris.time_range(i)?;
             date_range = [lo.max(date_range[0]), hi.min(date_range[1])];
         }
         if date_range[0] > date_range[1] {
-            return Err(io::Error::other("暦表の有効範囲が重なりません"));
+            return Err(io::Error::other("暦表と月位置計算の有効範囲が重なりません"));
         }
         Ok(Self {
             date_range,
