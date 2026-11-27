@@ -40,7 +40,7 @@ impl Site {
             last: Some(v["julian_date"].as_f64().unwrap()),
         }))
     }
-    pub(super) fn from_surface(s: &crate::surface::Surface, horizon: Camera) -> Self {
+    pub(crate) fn from_surface(s: &crate::surface::Surface, horizon: Camera) -> Self {
         Self {
             body: s.body,
             lat: s.lat,
