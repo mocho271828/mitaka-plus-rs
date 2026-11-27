@@ -138,7 +138,14 @@ impl SearchRows {
     }
     pub(super) fn matches(&self, index: usize, words: &[&str]) -> bool {
         if let Some(row) = self.rows.get(index) {
-            return words.iter().all(|&w| row.key.contains(w));
+            return words.iter().all(|&w| {
+                row.key.contains(w)
+                    || (w.ends_with(".dat")
+                        && row
+                            .source
+                            .split_whitespace()
+                            .any(|s| s.eq_ignore_ascii_case(w)))
+            });
         }
         // SDSSの検索対象は元ファイルでの通し番号。識別子を全件分常駐させない。
         let numbered = (index + 1).to_string();
@@ -200,7 +207,12 @@ impl Catalog {
                 };
                 for star in stars {
                     let mut label = format!("HIP {}", star.hip);
+                    let mut source = format!(
+                        "hip.dat · 記録 {} · V {:.2}",
+                        star.source_row, star.magnitude
+                    );
                     if let Some(s) = names.get(&star.hip) {
+                        source.push_str(&format!(" · star_names_HIP.dat 行 {}", s.source_row));
                         for alias in [&s.name_bytes, &s.localized_name_bytes] {
                             let alias = name(alias);
                             if !alias.is_empty() && alias != "*" {
@@ -209,14 +221,7 @@ impl Catalog {
                             }
                         }
                     }
-                    rows.push(Entry::new(
-                        label,
-                        format!(
-                            "hip.dat · 記録 {} · V {:.2}",
-                            star.source_row, star.magnitude
-                        ),
-                        Key::Hip(star.hip),
-                    ));
+                    rows.push(Entry::new(label, source, Key::Hip(star.hip)));
                 }
                 Store::Static
             }
