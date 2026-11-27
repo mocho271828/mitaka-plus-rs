@@ -1,4 +1,5 @@
 //! CF96 の太陽中心J2000赤道座標を黄道座標へ変換し、AUのまま透視投影する。
+mod scales;
 pub(crate) mod sphere;
 use eframe::egui::{self, Color32, Pos2, Rect, Stroke};
 use mitaka_core::{
@@ -418,6 +419,8 @@ impl Solar {
         system: &Cf96Ephemeris,
         jd: f64,
         root: &std::path::Path,
+        picking: crate::viewer::Picking,
+        layers: &crate::layers::LayerOptions,
     ) -> io::Result<()> {
         self.prepare(system, jd)?;
         let (response, painter) =
@@ -479,6 +482,7 @@ impl Solar {
         } else if self.follow {
             self.camera.target = dest;
         }
+        scales::paint(&painter, rect, self.camera, layers);
         if self.orbits {
             let stroke = Stroke::new(0.7_f32, Color32::from_rgb(59, 77, 100));
             for (i, path) in scene.orbits.iter().enumerate() {
@@ -539,10 +543,7 @@ impl Solar {
             })
             .collect();
         visible.sort_by(|a, b| b.2.total_cmp(&a.2));
-        let click = response
-            .clicked()
-            .then(|| response.interact_pointer_pos())
-            .flatten();
+        let click = picking.pointer(&response);
         let mut pick = None;
         let mut nearest = f32::INFINITY;
         for (i, pos, depth) in visible {

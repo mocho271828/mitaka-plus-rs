@@ -18,6 +18,7 @@ mod session_ui;
 mod smoke;
 mod solar;
 mod surface;
+mod viewer;
 
 use crate::{
     catalog::SkyData,
@@ -96,6 +97,8 @@ impl Args {
     }
 }
 struct App {
+    picking: viewer::Picking,
+    quality: viewer::Quality,
     motion: camera_control::State,
     terrain_amplification: mitaka_core::terrain::Amplification,
     background_render: layers::background::Renderer,
@@ -149,6 +152,8 @@ impl App {
             media.reset(&data.root);
         }
         Ok(Self {
+            picking: Default::default(),
+            quality: Default::default(),
             terrain_amplification: Default::default(),
             data: initial,
             motion: Default::default(),
@@ -258,6 +263,11 @@ impl App {
             Command::LocalHtml => self.open_script_html(),
             Command::RememberState | Command::RecallState => {
                 if let Err(e) = self.remembered_session(command == Command::RememberState) {
+                    self.error = Some(e.to_string());
+                }
+            }
+            Command::SaveWindow | Command::RecallWindow => {
+                if let Err(e) = viewer::window_position(ctx, command == Command::SaveWindow) {
                     self.error = Some(e.to_string());
                 }
             }
@@ -552,6 +562,7 @@ impl App {
                 if lat_changed || lon_changed {
                     self.options.layers.observer.clear();
                 }
+                self.picking.ui(ui);
                 self.options.layers.ui(
                     ui,
                     self.data.as_ref(),
@@ -639,12 +650,19 @@ impl App {
                 g.controls = true;
                 g
             });
-            g.draw(ui);
+            g.draw(ui, self.picking);
             return;
         }
         if self.view == View::Solar {
             let data = self.data.as_ref().unwrap();
-            if let Err(e) = self.solar.draw(ui, &data.ephemeris, self.jd, &data.root) {
+            if let Err(e) = self.solar.draw(
+                ui,
+                &data.ephemeris,
+                self.jd,
+                &data.root,
+                self.picking,
+                &self.options.layers,
+            ) {
                 ui.label(e.to_string());
             }
             self.object_in_solar(ui);
@@ -699,10 +717,7 @@ impl App {
             frame: &frame,
             rect,
         };
-        let click = response
-            .clicked()
-            .then(|| response.interact_pointer_pos())
-            .flatten();
+        let click = self.picking.pointer(&response);
         let Some(data) = self.data.as_ref() else {
             return;
         };
@@ -777,6 +792,7 @@ impl eframe::App for App {
                 ui.layer_id()
             })
             .inner;
+        self.quality.apply(ctx, canvas_layer, &self.options.layers);
         self.projector.frame(ctx, canvas_layer, self.canvas_rect);
         if self.playback.show && self.data.is_some() {
             egui::Area::new("current date".into())

@@ -1,6 +1,6 @@
 pub(crate) mod background;
 pub mod catalog;
-mod grid;
+pub(crate) mod grid;
 pub(crate) mod landscape;
 mod render;
 mod state;
@@ -11,6 +11,12 @@ use eframe::egui;
 use std::collections::{BTreeSet, HashSet};
 
 pub struct LayerOptions {
+    pub circle_scales: bool,
+    pub square_scales: bool,
+    pub antialias: bool,
+    pub point_smoothing: bool,
+    pub line_smoothing: bool,
+    pub text_smoothing: bool,
     pub equatorial: bool,
     pub ecliptic: bool,
     pub galactic: bool,
@@ -35,6 +41,12 @@ pub struct LayerOptions {
 impl Default for LayerOptions {
     fn default() -> Self {
         Self {
+            circle_scales: true,
+            square_scales: false,
+            antialias: true,
+            point_smoothing: true,
+            line_smoothing: true,
+            text_smoothing: true,
             equatorial: false,
             ecliptic: false,
             galactic: false,
@@ -98,6 +110,14 @@ impl LayerOptions {
                     }
                 });
         }
+        ui.collapsing("距離目盛と描画品質", |ui| {
+            ui.checkbox(&mut self.circle_scales, "距離目盛（円）");
+            ui.checkbox(&mut self.square_scales, "距離目盛（正方形）");
+            ui.checkbox(&mut self.antialias, "アンチエイリアス");
+            ui.checkbox(&mut self.point_smoothing, "点を滑らかに表示");
+            ui.checkbox(&mut self.line_smoothing, "線を滑らかに表示");
+            ui.checkbox(&mut self.text_smoothing, "文字を滑らかに表示");
+        });
         ui.checkbox(&mut self.landscape, "観測地点のパノラマ");
         egui::ComboBox::from_label("天の川")
             .selected_text(self.milky_way.label())

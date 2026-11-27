@@ -24,6 +24,12 @@ macro_rules! flags {
 }
 impl LayerOptions {
     flags! {
+        (circle_scales,35,"circleScales","grids","circle_scales"),
+        (square_scales,36,"squareScales","grids","square_scales"),
+        (antialias,37,"antialias","renderer","antialias"),
+        (point_smoothing,38,"pointSmooth","renderer","point_smoothing"),
+        (line_smoothing,39,"lineSmooth","renderer","line_smoothing"),
+        (text_smoothing,40,"textSmooth","renderer","text_smoothing"),
         (boundaries,6,"bounds","constellations","boundaries"),(illustrations,65,"illusts","constellations","illustrations"),
         (proper_names,8,"starLabels","stars","proper_names"),(selected_only,66,"selectedStarLabels","stars","selected_proper_names_only"),
         (stars,23,"starsVisible","stars","visible"),(bayer,24,"bayerLabels","stars","bayer_labels"),

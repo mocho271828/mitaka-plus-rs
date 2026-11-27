@@ -14,6 +14,8 @@ pub enum Command {
     RememberState,
     RecallState,
     LoadState,
+    SaveWindow,
+    RecallWindow,
     SaveState,
     Sky,
     Horizon,
@@ -42,6 +44,8 @@ const FILE: &[(Command, &str)] = &[
     (Command::Export, "画像を書き出す…"),
 ];
 const DISPLAY: &[(Command, &str)] = &[
+    (Command::SaveWindow, "主ウィンドウの位置を記憶"),
+    (Command::RecallWindow, "主ウィンドウの位置を復元"),
     (Command::Projector, "投影ウィンドウ…"),
     (Command::Fullscreen, "全画面表示を切り替える"),
     (Command::Sky, "全天図"),
