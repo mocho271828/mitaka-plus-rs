@@ -383,7 +383,8 @@ impl Solar {
         Ok(())
     }
     pub(crate) fn stationary_surface(&self) -> bool {
-        self.flight_site.is_some() && self.surface_flight.is_none()
+        // flight_site は離陸後も残り、次の着陸の開始位置として使われる。
+        self.landed.is_some()
     }
     pub(crate) fn flight_duration(&mut self, seconds: f64) {
         if let Some(f) = &mut self.surface_flight {
@@ -870,22 +871,32 @@ mod tests {
             }),
             ..Solar::default()
         };
-        for ascending in [false, true] {
-            let ground = Site::ground(3, 35., 139., 8., Camera::default());
-            solar.begin_surface_flight(ground, jd, ascending).unwrap();
-            solar.surface_flight.as_mut().unwrap().started =
-                Instant::now() - std::time::Duration::from_secs(8);
-            assert!(solar.tick_surface(jd).unwrap());
-            assert!(!solar.tick_surface(jd).unwrap());
-            let s = solar.flight_site.unwrap();
-            assert_eq!(s.body, 3);
-            let radius = if ascending {
-                RADII_KM[3] * (1. + 7.5 * 617.3 / 2000.)
-            } else {
-                RADII_KM[3] + 0.010
-            };
-            assert!((solar.camera.distance * KM_PER_AU - radius).abs() < 1e-8);
-            assert_eq!(solar.landed, (!ascending).then_some(3));
+        for (body, orbit_radius) in [
+            (3, RADII_KM[3] * (1. + 7.5 * 617.3 / 2000.)),
+            (4, RADII_KM[4] * 9.),
+        ] {
+            for ascending in [false, true] {
+                let ground = Site::ground(body, 35., 139., 8., Camera::default());
+                solar.begin_surface_flight(ground, jd, ascending).unwrap();
+                assert!(!solar.stationary_surface());
+                solar.flight_duration(0.);
+                assert!(solar.tick_surface(jd).unwrap());
+                assert!(!solar.tick_surface(jd).unwrap());
+                let s = solar.flight_site.unwrap();
+                assert_eq!(s.body, body);
+                let radius = if ascending {
+                    orbit_radius
+                } else {
+                    RADII_KM[body] + 0.010
+                };
+                assert!((solar.camera.distance * KM_PER_AU - radius).abs() < 1e-8);
+                assert_eq!(
+                    solar.stationary_surface(),
+                    !ascending,
+                    "body={body}, ascending={ascending}"
+                );
+                assert_eq!(solar.landed, (!ascending).then_some(body));
+            }
         }
     }
     #[test]
