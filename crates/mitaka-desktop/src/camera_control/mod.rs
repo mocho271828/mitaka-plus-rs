@@ -520,8 +520,12 @@ impl App {
                     return Err("全天図ではモードを切り替えられません".into());
                 }
                 let ascend = n == 1.;
-                if self.view == View::Solar && self.solar.selected != 3 && self.solar.selected != 4
-                {
+                let body = match self.view {
+                    View::Solar => Some(self.solar.selected),
+                    View::Surface => self.surface.as_ref().map(|g| g.body),
+                    _ => None,
+                };
+                if body.is_some_and(|body| !matches!(body, 3 | 4)) {
                     self.nonterrain_mode(ascend, time.seconds, time.smooth)
                         .map_err(|e| e.to_string())?;
                 } else if (ascend && self.view != View::Solar)
