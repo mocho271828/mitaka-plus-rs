@@ -4,6 +4,7 @@ mod chart;
 mod commands;
 mod fonts;
 mod galaxies;
+mod media_preview;
 mod playback;
 mod projection;
 mod script_ui;
@@ -90,6 +91,7 @@ impl Args {
     }
 }
 struct App {
+    media: media_preview::Media,
     scripts: script_ui::Scripts,
     playback: playback::Playback,
     session: session::Session,
@@ -132,6 +134,7 @@ impl App {
         let utc = utc_date(jd).ok_or("日時の範囲外です")?;
         Ok(Self {
             data: initial,
+            media: Default::default(),
             scripts: Default::default(),
             playback: Default::default(),
             session: Default::default(),
@@ -201,6 +204,7 @@ impl App {
     fn execute(&mut self, command: Command, ctx: &egui::Context) {
         match command {
             Command::Open => self.open(),
+            Command::Media => self.media.choose(ctx),
             Command::RunScript => self.script_file(ctx),
             Command::ScriptPanel => self.scripts.panel = true,
             Command::LocalHtml => self.open_script_html(),
@@ -573,6 +577,7 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         self.clock_frame(ctx);
         self.scripts_frame(ctx);
+        self.media.frame(ctx);
         if self.view == View::Solar {
             if let Some(body) = self.solar.landed.take() {
                 self.view = if body == 3 {

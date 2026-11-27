@@ -24,3 +24,5 @@ cargo run --locked -p mitaka-desktop -- --data-root "/absolute/path/to/resources
 手動の Distribution ワークフローは macOS Universal ZIP、Windows x64 ZIP、Ubuntu 24.04 amd64 の deb、依存ソース付きアーカイブを作成します。Macで作る場合は Rust の aarch64-apple-darwin と x86_64-apple-darwin 両ターゲットを導入して `bash tools/package.sh` を実行します。Mac版はアドホック署名です。
 
 `bash tools/offline-source.sh` は現在のコミットと Cargo.lock に記載された各依存のソースを dist にまとめます。SDK・Cコンパイラ・固定版Rustがある環境でアーカイブを展開し、`cargo build --workspace --frozen` を実行します。天文データは別途選択します。
+
+[ローカルメディアのプレビューと再生環境](docs/MEDIA.md)
