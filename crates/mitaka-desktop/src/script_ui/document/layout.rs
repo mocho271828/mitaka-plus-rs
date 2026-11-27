@@ -215,7 +215,8 @@ impl<'a> Layout<'a> {
         let margin = style.borders.margin();
         let outlined = (block || name == "body") && margin != Default::default();
         if outlined {
-            ctx.inset = outer + margin;
+            ctx.inset.left += margin.left;
+            ctx.inset.right += margin.right;
         }
         if block {
             self.break_line = true;
@@ -281,14 +282,52 @@ impl<'a> Layout<'a> {
             if start == self.blocks.len() {
                 self.begin_block(ctx);
             }
+            let end = self.blocks.len();
+            let enclosed = &mut self.blocks[start..end];
+            reserve_vertical_border(enclosed.iter_mut(), |m| &mut m.top, margin.top);
+            reserve_vertical_border(enclosed.iter_mut().rev(), |m| &mut m.bottom, margin.bottom);
             self.outlines.push(Outline {
-                blocks: start..self.blocks.len(),
-                outer,
+                blocks: start..end,
+                outer_left: outer.left,
+                outer_right: outer.right,
+                top_at_close: self.blocks[start].inset.top,
+                bottom_at_close: self.blocks[end - 1].inset.bottom,
+                cell_row: ctx
+                    .cell
+                    .filter(|_| matches!(name, "td" | "th"))
+                    .map(|cell| cell.row),
                 paint: style,
             });
         }
         if block {
             self.break_line = true;
+        }
+    }
+}
+
+// 上下の枠は境界の段落にだけ領域を取る。境界が表の行なら、その行の各セルで領域を取る。
+fn reserve_vertical_border<'a>(
+    mut blocks: impl Iterator<Item = &'a mut Block>,
+    side: fn(&mut egui::epaint::Marginf) -> &mut f32,
+    width: f32,
+) {
+    if width == 0. {
+        return;
+    }
+    let Some(first) = blocks.next() else {
+        return;
+    };
+    *side(&mut first.inset) += width;
+    let Some(mut cell) = first.cell else {
+        return;
+    };
+    for block in blocks {
+        let Some(next) = block.cell.filter(|c| c.row == cell.row) else {
+            break;
+        };
+        if cell.col != next.col {
+            *side(&mut block.inset) += width;
+            cell = next;
         }
     }
 }
