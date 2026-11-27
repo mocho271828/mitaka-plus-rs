@@ -14,6 +14,7 @@ git archive HEAD | tar -xf - -C "$tree"
 )
 archive="mitaka-plus-$ref-source.tar.gz"
 tar -czf "$out/$archive" -C "$out" "mitaka-plus-$ref"
+rm -r "$tree"
 
 # 実際に配るアーカイブから、作成時の依存キャッシュやビルド済みバイナリを参照せずに検証する。
 mkdir -p "$out/unpacked" "$out/empty-cargo-home"
