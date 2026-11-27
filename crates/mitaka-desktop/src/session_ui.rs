@@ -95,6 +95,7 @@ impl App {
         {
             v["radius_display"][key] = json!(scale);
         }
+        v["terrain_amplification"] = json!(self.terrain_amplification.stage());
         let surface = &self.solar.surfaces;
         v["earth_layers"] = json!({"clouds":surface.clouds,"city_lights":surface.lights});
         v["eclipse"]["shadows"] = json!(surface.eclipse);
@@ -132,11 +133,13 @@ impl App {
             });
         }
         let layers = crate::layers::LayerOptions::restore(v, data)?;
+        let terrain_amplification = state.terrain_amplification()?;
         // 検証と出典照合が全て成功してから、補間を停止して一括適用する。
         self.objects = Default::default();
         self.objects.selections = selections;
         self.scripts.cancel();
         self.options.layers = layers;
+        self.terrain_amplification = terrain_amplification;
         self.solar.stop();
         self.set_date(jd);
         self.camera_extras_after_restore(camera, restored_site);
