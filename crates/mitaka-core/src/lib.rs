@@ -5,6 +5,8 @@ mod binary;
 pub mod catalog;
 pub mod data_root;
 pub mod ephemeris;
+pub mod extended_catalog;
+pub mod galaxy;
 pub mod lunar;
 pub mod orbit;
 pub mod terrain;
