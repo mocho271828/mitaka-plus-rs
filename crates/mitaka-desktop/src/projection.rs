@@ -65,8 +65,16 @@ impl Camera {
         self.latitude = self.latitude.clamp(-limit, limit);
     }
     pub fn pan(&mut self, view: View, dx: f64, dy: f64) {
-        self.longitude += (if view == View::Sky { 1. } else { -1. }) * dx * 360. / self.zoom;
-        self.latitude += dy * 180. / self.zoom;
+        let (sin, cos) = self.roll.to_radians().sin_cos();
+        let x = dx * 360. / self.zoom;
+        let y = dy * 180. / self.zoom;
+        let longitude = x * cos + y * sin;
+        self.longitude += if view == View::Sky {
+            longitude
+        } else {
+            -longitude
+        };
+        self.latitude += y * cos - x * sin;
         self.normalize(view);
     }
     pub fn center(&mut self, view: View, [longitude, latitude]: [f64; 2]) {
@@ -153,6 +161,20 @@ mod tests {
         let camera = Camera::default();
         near(camera.position(View::Sky, [270., 45.]), [0.25, 0.25]);
         near(camera.position(View::Horizon, [270., 45.]), [0.75, 0.25]);
+    }
+    #[test]
+    fn chart_pan_rotates_both_axes_with_the_camera_roll() {
+        for (view, longitude) in [(View::Sky, 191.25), (View::Horizon, 168.75)] {
+            let mut camera = Camera {
+                zoom: 4.,
+                roll: 90.,
+                ..Camera::default()
+            };
+            camera.pan(view, 0.25, 0.);
+            near([camera.longitude, camera.latitude], [180., -22.5]);
+            camera.pan(view, 0., 0.25);
+            near([camera.longitude, camera.latitude], [longitude, -22.5]);
+        }
     }
     #[test]
     fn tilted_horizon_centers_targets_and_handles_zenith() {

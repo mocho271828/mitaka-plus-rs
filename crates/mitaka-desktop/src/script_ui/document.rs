@@ -91,7 +91,12 @@ struct Cell {
 struct Outline {
     blocks: std::ops::Range<usize>,
     paint: Paint,
-    outer: egui::epaint::Marginf,
+    // 左右は祖先の枠幅を、上下はこの要素を閉じた時点で境界に積んだ枠幅を使う。
+    outer_left: f32,
+    outer_right: f32,
+    top_at_close: f32,
+    bottom_at_close: f32,
+    cell_row: Option<usize>,
 }
 struct Block {
     align: egui::Align,
@@ -579,6 +584,57 @@ mod render_tests {
         };
         assert_eq!(page.activate(b, p).unwrap(), "print(42)");
     }
+    #[test]
+    fn container_borders_do_not_insert_space_between_paragraphs() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("paragraphs.html");
+        let gap = |style| {
+            fs::write(
+                &path,
+                format!("<div style='{style}'><p>One</p><p>Two</p></div>"),
+            )
+            .unwrap();
+            let mut page = Document::open(path.clone()).unwrap();
+            let ctx = egui::Context::default();
+            let (view, _) = render(&mut page, &ctx, vec![]);
+            label_rect(&view, "Two").top() - label_rect(&view, "One").bottom()
+        };
+        assert_eq!(gap("border:8px solid red"), gap(""));
+    }
+    #[test]
+    fn table_cell_borders_cover_the_whole_row_without_stretching_child_borders() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rows.html");
+        fs::write(&path, r#"<table><tr>
+            <td style="border-left:2px solid red"><p style="border-left:2px solid black">One</p></td>
+            <td style="border-left:2px solid blue">First<br>Second<br>Third</td>
+            </tr></table>"#).unwrap();
+        let mut page = Document::open(path).unwrap();
+        let ctx = egui::Context::default();
+        render(&mut page, &ctx, vec![]);
+        let (view, _) = render(&mut page, &ctx, vec![]);
+        let extent = |color| {
+            view.shapes
+                .iter()
+                .find_map(|entry| match &entry.shape {
+                    egui::Shape::LineSegment { points, stroke }
+                        if stroke.width == 2. && stroke.color == color =>
+                    {
+                        Some(egui::emath::Rangef::new(points[0].y, points[1].y))
+                    }
+                    _ => None,
+                })
+                .unwrap()
+        };
+        let left = extent(egui::Color32::RED);
+        let right = extent(egui::Color32::BLUE);
+        assert_eq!(
+            left, right,
+            "borders of both cells in this row must share their vertical extent"
+        );
+        assert!(extent(egui::Color32::BLACK).span() < left.span());
+    }
+
     #[test]
     fn unresolved_css_and_unverified_visibility_disable_execution() {
         for head in [

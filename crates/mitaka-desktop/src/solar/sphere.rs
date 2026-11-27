@@ -92,7 +92,7 @@ struct Buffers<'a> {
 pub struct Surfaces {
     files: HashMap<&'static str, Result<RgbImage, String>>,
     cache: HashMap<usize, (Key, TextureHandle, Vec<f64>)>,
-    terrains: HashMap<usize, Option<terrain::Source>>,
+    terrains: HashMap<usize, terrain::Layer>,
     pub(super) mode: Amplification,
     pub(super) preview: bool,
     drawn: Vec<usize>,
@@ -135,6 +135,11 @@ impl Surfaces {
                 self.emission
                     .iter()
                     .filter_map(|v| v.as_ref().err().map(String::as_str)),
+            )
+            .chain(
+                self.terrains
+                    .values()
+                    .filter_map(|entry| entry.warning.as_deref()),
             )
     }
     pub(super) fn begin_frame(&mut self) {
@@ -257,21 +262,11 @@ impl Surfaces {
                 10 => mitaka_core::lunar::lunar_orientation(scene.jd)?,
                 _ => mitaka_core::rotation::planet_orientation(index - 1, scene.jd)?,
             };
-            let ground_source = if displaced {
-                let slot = match self.terrains.entry(index) {
-                    std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
-                    std::collections::hash_map::Entry::Vacant(e) => {
-                        e.insert(match terrain::Source::open(root, index) {
-                            Ok(source) => Some(source),
-                            Err(err) if err.kind() == io::ErrorKind::NotFound => None,
-                            Err(err) => return Err(err),
-                        })
-                    }
-                };
-                slot.as_mut()
-            } else {
-                None
-            };
+            let ground_source = displaced.then(|| {
+                self.terrains
+                    .entry(index)
+                    .or_insert_with(|| terrain::Layer::open(root, index))
+            });
             let (image, ground) = rasterize(&key, scene, index, sources, axes, ground_source)?;
             let tex = painter.ctx().load_texture(
                 format!("planet-{index}"),
@@ -297,7 +292,7 @@ fn rasterize(
     index: usize,
     maps: Buffers<'_>,
     axes: [Point; 3],
-    source: Option<&mut terrain::Source>,
+    source: Option<&mut terrain::Layer>,
 ) -> io::Result<(ColorImage, Vec<f64>)> {
     let tile = key.tile;
     let rect = key.rect;
@@ -334,7 +329,7 @@ fn rasterize(
             [w, h],
             f64::from(rect.width() / rect.height()),
         );
-        Some(source.render(&view, mode, preview)?)
+        source.render(&view, mode, preview)
     } else {
         None
     };
