@@ -44,6 +44,7 @@ fn check_date_limits(app: &mut App) -> io::Result<()> {
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Scene {
     Sky,
+    DeepSky,
     Horizon,
     Solar,
     GlobeEarth,
@@ -59,6 +60,7 @@ impl Scene {
     fn name(self) -> &'static str {
         match self {
             Self::Sky => "sky",
+            Self::DeepSky => "deep-sky",
             Self::Horizon => "horizon",
             Self::Solar => "solar",
             Self::GlobeEarth => "earth-sphere",
@@ -88,6 +90,7 @@ impl Smoke {
             Self {
                 scenes: vec![
                     Scene::Sky,
+                    Scene::DeepSky,
                     Scene::Horizon,
                     Scene::Solar,
                     Scene::GlobeEarth,
@@ -121,7 +124,22 @@ impl Smoke {
                 app.projector.open = true;
                 app.projector.probe = true;
             }
+            Scene::DeepSky => {
+                if !["ngc.dat", "SDSS_GAL.dat", "SDSS_QSO.dat"]
+                    .iter()
+                    .all(|f| data.root.join(f).is_file())
+                {
+                    return Ok(false);
+                }
+                app.projector.open = false;
+                app.view = View::Sky;
+                let d = &mut app.options.layers.deep_sky;
+                d.ngc = true;
+                d.galaxies = true;
+                d.quasars = true;
+            }
             Scene::Horizon => {
+                app.options.layers.deep_sky = Default::default();
                 app.view = View::Horizon;
                 app.projector.open = false;
             }
@@ -220,6 +238,9 @@ impl Smoke {
             if app.projector.verified() {
                 app.projector.open = false;
             }
+            return Ok(false);
+        }
+        if scene == Scene::DeepSky && !app.data.as_ref().unwrap().deep_sky.borrow().ready()? {
             return Ok(false);
         }
         if scene == Scene::CameraLua {

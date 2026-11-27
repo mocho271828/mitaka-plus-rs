@@ -506,6 +506,11 @@ assert(not pcall(function() Camera:setOrient(0,0,0,0) end))
 assert(not pcall(function() Camera:setZoomLogTo(-1,1) end))
 print('camera-check-complete')
 "#;
+        let check = if root.join("star_names_HIP.dat").is_file() {
+            std::borrow::Cow::Borrowed(check)
+        } else {
+            std::borrow::Cow::Owned(check.replace("Star.Sirius", "Planet.Mars"))
+        };
         let check = format!("local check_2000_dates = {check_2000_dates}\n{check}");
         let file = local_source(dir.path(), &check)?;
         self.scripts.launch(file, false, root, dir, ctx);

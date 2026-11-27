@@ -15,6 +15,7 @@ macro_rules! flags {
         }
         pub fn snapshot(&self,mut reply:Value)->Value{
             $(reply[$host]=json!(self.$field);)+
+            self.deep_sky.snapshot(&mut reply);
             reply["starBrightness"]=json!(self.brightness);reply["starMarking"]=json!(MARKS[self.marking as usize]);reply["landscape"]=json!(self.landscape);reply["milkyWay"]=json!(self.milky_way.name());reply
         }
         fn flag(&mut self,kind:u64)->Option<&mut bool>{
@@ -38,6 +39,10 @@ impl LayerOptions {
         (galactic,33,"galactic","grids","galactic"),(horizontal,34,"horizontal","grids","horizontal")
     }
     pub fn action(&mut self, kind: u64, msg: &Value) -> Result<bool, String> {
+        if let Some(flag) = self.deep_sky.flag(kind) {
+            *flag = msg["enabled"].as_bool().ok_or("真偽値が必要です")?;
+            return Ok(true);
+        }
         if let Some(flag) = self.flag(kind) {
             *flag = msg["enabled"].as_bool().ok_or("真偽値が必要です")?;
             return Ok(true);
@@ -72,6 +77,7 @@ impl LayerOptions {
     pub fn save(&self, v: &mut Value, data: &SkyData) {
         self.write_flags(v);
         v["milky_way_mode"] = json!(self.milky_way as u8);
+        self.deep_sky.save(v);
         v["stars"]["brightness"] = json!(self.brightness);
         v["stars"]["marking"] = json!(self.marking);
         v["selected_star_name_hips"] = match &self.selected {
@@ -102,6 +108,7 @@ impl LayerOptions {
             .into_iter()
             .find(|m| f64::from(*m as u8) == mode)
             .ok_or_else(|| io::Error::other("天の川モードが範囲外です"))?;
+        out.deep_sky = crate::deep_sky::Display::restore(v)?;
         // 呼出元の Session::read は全フィールドの必須性・型・数値範囲を確認済み。
         out.marking = v["stars"]["marking"].as_f64().unwrap() as u8;
         out.brightness = v["stars"]["brightness"].as_f64().unwrap() as f32;

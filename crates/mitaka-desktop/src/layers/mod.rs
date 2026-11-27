@@ -17,6 +17,7 @@ pub struct LayerOptions {
     pub point_smoothing: bool,
     pub line_smoothing: bool,
     pub text_smoothing: bool,
+    pub deep_sky: crate::deep_sky::Display,
     pub equatorial: bool,
     pub ecliptic: bool,
     pub galactic: bool,
@@ -47,6 +48,7 @@ impl Default for LayerOptions {
             point_smoothing: true,
             line_smoothing: true,
             text_smoothing: true,
+            deep_sky: Default::default(),
             equatorial: false,
             ecliptic: false,
             galactic: false,
@@ -160,6 +162,7 @@ impl LayerOptions {
                 });
             }
         });
+        self.deep_sky.ui(ui);
         ui.collapsing("恒星", |ui| {
             for (flag, name) in [
                 (&mut self.stars, "恒星を表示"),

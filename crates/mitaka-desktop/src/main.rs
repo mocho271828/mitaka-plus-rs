@@ -3,6 +3,7 @@ mod capture;
 mod catalog;
 mod chart;
 mod commands;
+mod deep_sky;
 mod fonts;
 mod galaxies;
 mod layers;

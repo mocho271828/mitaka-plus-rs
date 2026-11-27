@@ -112,7 +112,17 @@ impl Chart<'_> {
         if self.view == View::Horizon {
             self.draw_horizon(painter);
         }
-        self.paint_layers(painter, data, &options.layers);
+        self.paint_grids(painter, &options.layers);
+        if self.view == View::Sky {
+            data.deep_sky.borrow_mut().draw(
+                &options.layers.deep_sky,
+                painter,
+                self,
+                &data.root,
+                options.magnitude,
+            );
+        }
+        self.paint_constellation_layers(painter, data, &options.layers);
         if options.lines || options.labels {
             for constellation in &data.constellations {
                 if !options.layers.shows(&constellation.abbreviation) {
