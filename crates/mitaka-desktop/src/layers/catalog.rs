@@ -17,6 +17,7 @@ pub struct ArtRecord {
 }
 #[derive(Default)]
 pub struct LayersCatalog {
+    pub landscapes: super::landscape::Landscapes,
     pub names: HashMap<i32, String>,
     pub featured: HashSet<i32>,
     pub hosts: HashSet<i32>,
@@ -60,6 +61,8 @@ impl LayersCatalog {
             Ok(c) => out.places = c,
             Err(e) => out.warnings.push(e.to_string()),
         }
+        out.landscapes = super::landscape::Landscapes::load(root, &out.places, &mut out.warnings);
+        out.landscapes = super::landscape::Landscapes::load(root, &out.places, &mut out.warnings);
         if let Err(e) = out.load_art(&root.join("constellations"), constellations) {
             if e.kind() != io::ErrorKind::NotFound {
                 out.warnings.push(e.to_string());

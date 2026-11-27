@@ -94,6 +94,7 @@ impl Args {
     }
 }
 struct App {
+    landscape_render: layers::landscape::LandscapeRenderer,
     projector: projector::Projector,
     media: media_preview::Media,
     scripts: script_ui::Scripts,
@@ -140,6 +141,7 @@ impl App {
         let utc = utc_date(jd).ok_or("日時の範囲外です")?;
         Ok(Self {
             data: initial,
+            landscape_render: Default::default(),
             projector: Default::default(),
             media: Default::default(),
             scripts: Default::default(),
@@ -618,8 +620,23 @@ impl App {
         let Some(data) = self.data.as_ref() else {
             return;
         };
+        let show_landscape = view == View::Horizon && self.options.layers.landscape;
+        if show_landscape {
+            self.landscape_render.prepare(
+                &painter,
+                &data.layers.landscapes,
+                &data.layers.places,
+                &self.options.layers.observer,
+                (camera, 0.),
+                rect,
+            );
+        }
+        let click = click.filter(|p| !show_landscape || !self.landscape_render.opaque_at(*p));
         let pick = chart.paint(&painter, data, &self.options, self.selected, click);
         self.object_on_sky(&chart, &painter);
+        if show_landscape {
+            self.landscape_render.paint(&painter, rect);
+        }
         if click.is_some() {
             self.selected = pick;
             ui.ctx().request_repaint();
