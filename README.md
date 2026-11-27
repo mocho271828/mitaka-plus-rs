@@ -2,11 +2,11 @@
 
 恒星と惑星の位置を指定日時で計算し、地球の空から太陽系・銀河まで探索できる非公式デスクトップアプリです。天文計算、画面、入力処理、Luaホストとメディア操作をRustで実装しています。対象はmacOS 13以降（Apple Silicon・Intel）、Windows 11 x64、Ubuntu 24.04 x64（Wayland・X11）です。
 
-比較基準は既存macOS版のコミット [f9fe624](https://github.com/mocho271828/Mitaka_plus/tree/f9fe62485ad45a3b5651e050a49871a71b6f351d) です。Rust移植の累積ブランチは [codex/rust-preview](https://github.com/mocho271828/mitaka-plus-rs/tree/codex/rust-preview) です。[移植範囲と検証](docs/COMPATIBILITY.md)・[レビュー順序](docs/STACK.md)
+比較基準は既存macOS版のコミット [f9fe624](https://github.com/mocho271828/Mitaka_plus/tree/f9fe62485ad45a3b5651e050a49871a71b6f351d) です。Rust版の取得先は [main](https://github.com/mocho271828/mitaka-plus-rs/tree/main) です。[移植範囲と検証](docs/COMPATIBILITY.md)・[初回移植の統合履歴](docs/STACK.md)
 
 ## 配布物から起動する
 
-[Rustワークフロー](https://github.com/mocho271828/mitaka-plus-rs/actions/workflows/ci.yml) で配布物のある成功した実行を開き、お使いのOSのArtifactを展開してください。利用者が用意したMitakaデータの `resources/data` を「ファイル」→「データを開く…」で選びます。最低限 `hip.dat` と `cf96.dat` が必要です。テクスチャや探査機を使う場合は元の `resources` 以下の配置を保ってください。
+[Rustワークフロー](https://github.com/mocho271828/mitaka-plus-rs/actions/workflows/ci.yml) で配布物を生成した実行を開き、お使いのOSのArtifactを展開してください。配布の検査結果は各OSの `packages` ジョブで確認できます。利用者が用意したMitakaデータの `resources/data` を「ファイル」→「データを開く…」で選びます。最低限 `hip.dat` と `cf96.dat` が必要です。テクスチャや探査機を使う場合は元の `resources` 以下の配置を保ってください。
 
 | 環境 | 起動方法 |
 | --- | --- |
@@ -16,16 +16,17 @@
 
 ## 操作
 
-- 「表示」から全天図・地平図・太陽系3Dを切り替えます。「観測・表示設定」で日時、観測地点、等級や星座を変更できます。HIP番号を指定すると目的の恒星へ移動します。
-- 太陽系3Dはドラッグで回転、Shift＋ドラッグで平行移動、スクロールで拡縮します。「表示」→「銀河カタログ…」で近傍銀河・球状星団・SDSSを選びます。天体ブラウザでは小天体、衛星、探査機を検索し、位置を日時に合わせて追従できます。
+- 「表示」から全天図・地平図・太陽系3Dを切り替えます。日時設定ではUTCやユリウス日を直接入力できます。観測地設定で地点を、表示設定で等級や星座を変更できます。HIP番号を指定すると目的の恒星へ移動します。
+- 太陽系3Dはドラッグで回転、Shift＋ドラッグで平行移動、スクロールで拡縮します。「表示」→「銀河カタログ…」で近傍銀河・球状星団・SDSSを選びます。天体ブラウザでは恒星の固有名・HIP番号や太陽・月・惑星の名前を検索できます。小天体、衛星、探査機は日時を変えて位置を追従できます。
 - 「操作」→「天体間飛行…」で到着天体と緯度・経度を指定します。目的地を選択したまま中断すると、現在位置から再出発できます。Sキーで地球の地平図から離陸し、太陽系3Dでは選択した惑星・月に離着陸できます。
 - 「ファイル」から表示状態（JSON v9）を保存・復元し、画像をPNG・JPEG・BMPで書き出せます。「表示」→「投影ウィンドウ…」で主画面と同じ描画を別ウィンドウに映せます。
+- 「ファイル」から開いた画像は独立したプレビューウィンドウで移動・変形できます。
 - 「操作」からLuaファイルやコンソールを実行します。Luaは利用者の権限でローカルI/OとOSコマンドを使用できます。ローカルHTMLからの実行許可は開いた文書ごとに管理します。[表示とLua](docs/DISPLAY.md)・[画像・音声・動画](docs/MEDIA.md)
 
 ## ソースから起動する
 
 ```sh
-git clone --branch codex/rust-preview https://github.com/mocho271828/mitaka-plus-rs.git
+git clone --branch main https://github.com/mocho271828/mitaka-plus-rs.git
 cd mitaka-plus-rs
 cargo build --workspace --locked
 cargo run --locked -p mitaka-desktop -- --data-root "/path/to/resources/data"
