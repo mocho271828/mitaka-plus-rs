@@ -3,6 +3,22 @@ use chrono::Utc;
 use eframe::egui;
 
 impl App {
+    pub(super) fn submit_julian_input(&mut self) {
+        let result = self
+            .jd_input
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| "JD は数値で指定してください".to_owned())
+            .and_then(|jd| self.apply_date(jd));
+        match result {
+            Ok(()) => self.playback.stop(),
+            Err(message) => {
+                self.jd_input = format!("{:.6}", self.jd);
+                self.error = Some(message);
+            }
+        }
+    }
+
     pub(super) fn settings_windows(&mut self, ctx: &egui::Context) {
         let mut open = self.time_settings;
         egui::Window::new("日時設定")
@@ -20,6 +36,17 @@ impl App {
                         }
                     }
                 });
+                ui.add_enabled_ui(self.data.is_some() && !self.playback.is_running(), |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("JD");
+                        let entry = ui.text_edit_singleline(&mut self.jd_input);
+                        let enter =
+                            entry.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                        if ui.button("JDを適用").clicked() || enter {
+                            self.submit_julian_input();
+                        }
+                    });
+                });
                 ui.horizontal(|ui| {
                     if ui.button("前日").clicked() {
                         self.set_date(self.jd - 1.);
@@ -33,7 +60,6 @@ impl App {
                     if ui.button("J2000").clicked() {
                         self.set_date(J2000);
                     }
-                    ui.label(format!("JD {:.6}", self.jd));
                 });
                 ui.separator();
                 self.clock_controls(ui);

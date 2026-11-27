@@ -86,6 +86,9 @@ impl Default for Playback {
     }
 }
 impl Playback {
+    pub(super) fn is_running(&self) -> bool {
+        self.clock.is_some() || self.animation.is_some() || self.realtime
+    }
     pub(super) fn stop(&mut self) {
         self.clock = None;
         self.animation = None;
@@ -187,7 +190,9 @@ impl App {
             jd,
             self.data.as_ref().map(|data| data.date_range),
         )
-        .map_err(str::to_owned)
+        .map_err(str::to_owned)?;
+        self.jd_input = format!("{jd:.6}");
+        Ok(())
     }
     pub(super) fn animate_time(&mut self, msg: &serde_json::Value) -> Result<(), String> {
         let target = msg["target"].as_f64().ok_or("無効な日時です")?;

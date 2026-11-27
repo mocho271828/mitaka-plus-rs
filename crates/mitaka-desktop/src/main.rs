@@ -148,6 +148,7 @@ struct App {
     search_message: String,
     error: Option<String>,
     utc: String,
+    jd_input: String,
     smoke: Option<smoke::Smoke>,
 }
 impl App {
@@ -218,6 +219,7 @@ impl App {
             about: false,
             search_message: String::new(),
             error,
+            jd_input: format!("{jd:.6}"),
             utc: utc.format("%Y-%m-%d %H:%M:%S").to_string(),
             smoke,
         };
