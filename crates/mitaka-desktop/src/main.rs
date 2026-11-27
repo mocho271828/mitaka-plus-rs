@@ -251,14 +251,7 @@ impl App {
         }
         if let Some(surface) = &mut self.surface {
             surface.set_mode(mode)?;
-            if let Some(s) = self
-                .motion
-                .site
-                .as_mut()
-                .filter(|s| s.at_location(surface.body, surface.lat, surface.lon))
-            {
-                s.update_terrain(surface.landing_height_m(solar::RADII_KM[s.body]) / 1000.);
-            }
+            self.motion.update_ground(surface);
             self.solar.update_ground(surface, self.jd)?;
         }
         self.terrain_amplification = mode;
