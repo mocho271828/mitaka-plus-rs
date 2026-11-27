@@ -30,7 +30,7 @@ pub(crate) enum ChartTarget {
 pub(crate) struct ChartPick<'a> {
     pointer: Pos2,
     opaque: &'a dyn Fn(Pos2) -> bool,
-    pub target: Option<ChartTarget>,
+    pub target: Option<(ChartTarget, [f64; 2])>,
     pub distance_sq: f32,
 }
 impl<'a> ChartPick<'a> {
@@ -42,14 +42,20 @@ impl<'a> ChartPick<'a> {
             distance_sq: f32::INFINITY,
         }
     }
-    pub fn consider(&mut self, target: ChartTarget, point: Pos2, radius: f32) {
+    pub fn consider(
+        &mut self,
+        target: ChartTarget,
+        equatorial: [f64; 2],
+        point: Pos2,
+        radius: f32,
+    ) {
         let d = point.distance_sq(self.pointer);
         // sky_model.cpp の pick_object は同じ距離の恒星と惑星だけで惑星を優先する。
         let body_tie = d == self.distance_sq
             && matches!(target, ChartTarget::Body(_))
-            && matches!(self.target, Some(ChartTarget::Star(_)));
+            && matches!(self.target, Some((ChartTarget::Star(_), _)));
         if d <= radius * radius && (d < self.distance_sq || body_tie) && !(self.opaque)(point) {
-            self.target = Some(target);
+            self.target = Some((target, equatorial));
             self.distance_sq = d;
         }
     }
@@ -260,7 +266,12 @@ impl Chart<'_> {
                 selected_point = Some(p);
             }
             if let Some(pick) = pick.as_deref_mut() {
-                pick.consider(ChartTarget::Star(star.hip), p, 8.);
+                pick.consider(
+                    ChartTarget::Star(star.hip),
+                    [star.ra_deg.into(), star.dec_deg.into()],
+                    p,
+                    8.,
+                );
             }
         }
         if let (Some(point), Some(hip)) = (selected_point, selected) {

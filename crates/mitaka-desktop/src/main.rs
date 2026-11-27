@@ -2,6 +2,7 @@ mod camera_control;
 mod capture;
 mod catalog;
 mod chart;
+mod chart_input;
 mod commands;
 mod data_loading;
 mod deep_sky;
@@ -724,8 +725,14 @@ impl App {
             );
         }
         if let Some(mouse) = response.hover_pos() {
-            let factor = ui
-                .input(|i| (i.smooth_scroll_delta.y * 0.008).clamp(-2., 2.).exp() * i.zoom_delta());
+            let (pan, factor) = ui.input(chart_input::gesture);
+            if pan != egui::Vec2::ZERO {
+                self.camera().pan(
+                    view,
+                    f64::from(pan.x / rect.width()),
+                    f64::from(pan.y / rect.height()),
+                );
+            }
             if (factor - 1.).abs() > 1e-6 {
                 self.zoom_chart_at(
                     factor.into(),
@@ -780,8 +787,8 @@ impl App {
                 .paint(&chart, &painter, &bodies, pick.as_mut());
         }
         self.object_on_sky(&chart, &painter);
-        let moving = view == View::Horizon
-            && self.objects.paint_horizon(
+        let moving = if view == View::Horizon {
+            self.objects.paint_horizon(
                 data,
                 [self.jd, self.latitude, self.longitude],
                 objects::horizon::Canvas {
@@ -792,18 +799,30 @@ impl App {
                     opaque: &opaque,
                     picking: self.picking,
                 },
-            );
+            )
+        } else {
+            None
+        };
         if show_landscape {
             self.landscape_render.paint(&painter, rect);
         }
         if pointer.is_some() {
-            let (star, body) = match pick.and_then(|p| p.target).filter(|_| !moving) {
+            let hit = pick.and_then(|p| p.target).filter(|_| moving.is_none());
+            let focused = moving.or_else(|| hit.and_then(|(_, [ra, dec])| chart.observed(ra, dec)));
+            let (star, body) = match hit.map(|t| t.0) {
                 Some(chart::ChartTarget::Star(hip)) => (Some(hip), None),
                 Some(chart::ChartTarget::Body(id)) => (None, Some(id)),
                 None => (None, None),
             };
             self.solar.layers.select(view, body);
             self.selected = star;
+            chart_input::focus(
+                self.picking,
+                response.double_clicked(),
+                focused,
+                view,
+                self.camera(),
+            );
             ui.ctx().request_repaint();
         }
     }

@@ -61,10 +61,10 @@ impl Browser {
         sky: &SkyData,
         epoch: [f64; 3],
         canvas: Canvas<'_>,
-    ) -> bool {
+    ) -> Option<[f64; 2]> {
         let [jd, lat, lon] = epoch;
         let Ok(observer) = Observer::from_ephemeris(&sky.ephemeris, jd, lat, lon) else {
-            return false;
+            return None;
         };
         let mut nearest = canvas.nearest.min(64.);
         let mut picked = None;
@@ -120,7 +120,7 @@ impl Browser {
                     canvas.painter.circle_filled(p, 3., color);
                     if let Some(d) = pick(p, click, nearest, canvas.opaque) {
                         nearest = d;
-                        picked = Some((kind, row, catalog.clone()));
+                        picked = Some((kind, row, catalog.clone(), observed.horizontal_deg));
                     }
                 }
                 if options.labels {
@@ -149,16 +149,16 @@ impl Browser {
             }
         }
         if canvas.pointer.is_some() {
-            self.horizon.selected = picked.as_ref().map(|(k, i, _)| (*k, *i));
-            if let Some((kind, row, catalog)) = picked {
+            self.horizon.selected = picked.as_ref().map(|(k, i, _, _)| (*k, *i));
+            if let Some((kind, row, catalog, horizontal)) = picked {
                 if canvas.picking == Picking::Click || self.kind != kind || self.active != Some(row)
                 {
                     self.select_scene(kind, row, catalog, canvas.picking == Picking::Click);
                 }
-                return true;
+                return Some(horizontal);
             }
         }
-        false
+        None
     }
 }
 #[cfg(test)]
@@ -280,7 +280,7 @@ mod tests {
                         picking: Picking::Click,
                     },
                 );
-                assert_eq!(selected, expected);
+                assert_eq!(selected.is_some(), expected);
             });
             assert!(!out.shapes.is_empty());
             if expected {
