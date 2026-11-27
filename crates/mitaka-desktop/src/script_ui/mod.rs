@@ -27,7 +27,21 @@ pub(super) struct Scripts {
     draft: String,
     composing: bool,
 }
+const CONSOLE_BYTES: usize = 1024 * 1024;
+
 impl Scripts {
+    fn stage_console(&self) -> io::Result<(tempfile::TempDir, PathBuf)> {
+        if self.input.len() > CONSOLE_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "入力は UTF-8 で 1 MiB 以下にしてください",
+            ));
+        }
+        let dir = run::scratch()?;
+        let path = local_source(dir.path(), &self.input)?;
+        Ok((dir, path))
+    }
+
     fn append(&mut self, text: &str) {
         self.log.push_str(text);
         self.log.push('\n');
@@ -345,8 +359,7 @@ impl App {
                         .id(id)
                         .hint_text("Lua の式または文")
                         .code_editor()
-                        .desired_rows(3)
-                        .char_limit(65536),
+                        .desired_rows(3),
                 );
                 ui.horizontal(|ui| {
                     use crate::shortcuts::ConsoleKey;
@@ -399,29 +412,26 @@ impl App {
             });
         self.scripts.panel = open;
         if run_console {
-            let code = self.scripts.input.clone();
             let work = self
                 .data
                 .as_ref()
                 .and_then(|d| d.root.parent())
                 .unwrap_or(Path::new("."))
                 .to_owned();
-            let staged = run::scratch().and_then(|dir| {
-                let path = local_source(dir.path(), &code)?;
-                Ok((dir, path))
-            });
-            match staged {
+            match self.scripts.stage_console() {
                 Ok((dir, path)) => {
-                    if self.scripts.history.back() != Some(&code) {
-                        if self.scripts.history.len() == 64 {
-                            self.scripts.history.pop_front();
-                        }
-                        self.scripts.history.push_back(code);
-                    }
-                    self.scripts.cursor = None;
-                    self.scripts.input.clear();
-                    self.scripts.draft.clear();
                     self.scripts.launch(path, true, work, dir, ctx);
+                    if self.scripts.job.is_some() {
+                        let code = std::mem::take(&mut self.scripts.input);
+                        if self.scripts.history.back() != Some(&code) {
+                            if self.scripts.history.len() == 64 {
+                                self.scripts.history.pop_front();
+                            }
+                            self.scripts.history.push_back(code);
+                        }
+                        self.scripts.cursor = None;
+                        self.scripts.draft.clear();
+                    }
                 }
                 Err(e) => self.scripts.append(&e.to_string()),
             }
@@ -642,5 +652,30 @@ print('camera-check-complete')
                 self.scripts.log
             )))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn console_stages_a_mebibyte_and_preserves_oversized_input() {
+        let mut scripts = Scripts {
+            input: "月".repeat(CONSOLE_BYTES / 3),
+            ..Default::default()
+        };
+        scripts.input.push(' ');
+        assert_eq!(scripts.input.len(), CONSOLE_BYTES);
+        let (_dir, path) = scripts.stage_console().unwrap();
+        assert_eq!(std::fs::read_to_string(path).unwrap(), scripts.input);
+        scripts.input.push('!');
+        let original = scripts.input.clone();
+        assert_eq!(
+            scripts.stage_console().unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+        assert_eq!(scripts.input, original);
+        assert!(scripts.job.is_none() && scripts.history.is_empty());
     }
 }
