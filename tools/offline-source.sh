@@ -11,6 +11,15 @@ git archive HEAD | tar -xf - -C "$tree"
     cd "$tree"
     mkdir -p .cargo
     cargo vendor --locked --versioned-dirs crates-vendor > .cargo/config.toml
-    CARGO_HOME="$out/empty-cargo-home" cargo metadata --frozen --format-version 1 > /dev/null
 )
-tar -czf "dist/mitaka-plus-$ref-source.tar.gz" -C "$out" "mitaka-plus-$ref"
+archive="mitaka-plus-$ref-source.tar.gz"
+tar -czf "$out/$archive" -C "$out" "mitaka-plus-$ref"
+
+# 実際に配るアーカイブから、作成時の依存キャッシュやビルド済みバイナリを参照せずに検証する。
+mkdir -p "$out/unpacked" "$out/empty-cargo-home"
+tar -xzf "$out/$archive" -C "$out/unpacked"
+(
+    cd "$out/unpacked/mitaka-plus-$ref"
+    CARGO_HOME="$out/empty-cargo-home" CARGO_TARGET_DIR="$out/target" cargo build --workspace --frozen
+)
+mv -f "$out/$archive" "dist/$archive"
