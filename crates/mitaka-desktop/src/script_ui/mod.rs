@@ -178,8 +178,8 @@ impl App {
                 "atmosphereMode":self.solar.surfaces.air as u8,
                 "fullScreen":self.fullscreen.actual(ctx),
                 "targetBrowser":self.objects.open,
-                "timeSetting":self.settings,
-                "placeSetting":self.settings,
+                "timeSetting":self.time_settings,
+                "placeSetting":self.place_settings,
                 "scriptOutput":self.scripts.panel,
                 "dualScreen":self.projector.open,
             })));
@@ -242,7 +242,8 @@ impl App {
                         let enabled = msg["enabled"].as_bool().ok_or("真偽値が必要です")?;
                         match kind {
                             13 => self.objects.open = enabled,
-                            14 | 15 => self.settings = enabled,
+                            14 => self.time_settings = enabled,
+                            15 => self.place_settings = enabled,
                             16 => self.scripts.panel = enabled,
                             17 => self.projector.open = enabled,
                             _ => self.fullscreen.request(ctx, Some(enabled))?,
@@ -510,6 +511,14 @@ impl App {
         self.view = crate::projection::View::Solar;
         let dir = run::scratch()?;
         let check = r#"
+GUI.timeSetting = true
+GUI.placeSetting = true
+GUI:togglePlaceSetting()
+assert(GUI.timeSetting and not GUI.placeSetting)
+GUI.placeSetting = true
+GUI:toggleTimeSetting()
+assert(GUI.placeSetting and not GUI.timeSetting)
+GUI.placeSetting = false
 Asteroids.selectedOnly=true
 Satellites.orbits=true
 assert(Asteroids.selectedOnly and Satellites.orbits)

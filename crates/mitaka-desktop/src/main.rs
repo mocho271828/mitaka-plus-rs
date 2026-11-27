@@ -20,6 +20,7 @@ mod projector;
 mod script_ui;
 mod session;
 mod session_ui;
+mod settings_ui;
 mod shortcuts;
 mod smoke;
 mod solar;
@@ -140,6 +141,8 @@ struct App {
     query: String,
     search: bool,
     settings: bool,
+    time_settings: bool,
+    place_settings: bool,
     info: bool,
     about: bool,
     search_message: String,
@@ -209,6 +212,8 @@ impl App {
             query: String::new(),
             search: false,
             settings: false,
+            time_settings: false,
+            place_settings: false,
             info: false,
             about: false,
             search_message: String::new(),
@@ -329,6 +334,8 @@ impl App {
             Command::Sky => self.view = View::Sky,
             Command::Horizon => self.view = View::Horizon,
             Command::Objects => self.objects.open = true,
+            Command::TimeSettings => self.time_settings = true,
+            Command::PlaceSettings => self.place_settings = true,
             Command::Settings => self.settings = true,
             Command::Search => self.search = true,
             Command::Galaxy => {
@@ -576,83 +583,7 @@ impl App {
                 }
             });
         self.search = search;
-        let mut settings = self.settings;
-        egui::Window::new("観測・表示設定")
-            .open(&mut settings)
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("UTC");
-                    ui.text_edit_singleline(&mut self.utc);
-                    if ui.button("適用").clicked() {
-                        if let Some(jd) = parse_utc(&self.utc) {
-                            self.set_date(jd);
-                        } else {
-                            self.error =
-                                Some("UTC は YYYY-MM-DD HH:MM:SS で指定してください".into());
-                        }
-                    }
-                });
-                ui.horizontal(|ui| {
-                    if ui.button("前日").clicked() {
-                        self.set_date(self.jd - 1.);
-                    }
-                    if ui.button("翌日").clicked() {
-                        self.set_date(self.jd + 1.);
-                    }
-                    if ui.button("現在").clicked() {
-                        self.set_date(UNIX_EPOCH_JD + Utc::now().timestamp() as f64 / 86400.);
-                    }
-                    if ui.button("J2000").clicked() {
-                        self.set_date(J2000);
-                    }
-                    ui.label(format!("JD {:.6}", self.jd));
-                });
-                ui.separator();
-                self.clock_controls(ui);
-                self.solar.layers.panel(ui);
-                let mut mode = self.terrain_amplification;
-                egui::ComboBox::from_label("地形の起伏倍率")
-                    .selected_text(format!("×{}", mode.factor()))
-                    .show_ui(ui, |ui| {
-                        for value in mitaka_core::terrain::Amplification::ALL {
-                            ui.selectable_value(&mut mode, value, format!("×{}", value.factor()));
-                        }
-                    });
-                if let Err(e) = self.set_terrain_mode(mode) {
-                    self.error = Some(e.to_string());
-                }
-                let lat_changed = ui
-                    .add(egui::Slider::new(&mut self.latitude, -90. ..=90.).text("緯度 °"))
-                    .changed();
-                let lon_changed = ui
-                    .add(egui::Slider::new(&mut self.longitude, -180. ..=180.).text("東経 °"))
-                    .changed();
-                if lat_changed || lon_changed {
-                    self.options.layers.observer.clear();
-                }
-                self.picking.ui(ui);
-                self.objects.display.ui(ui);
-                self.options.layers.ui(
-                    ui,
-                    self.data.as_ref(),
-                    &mut self.latitude,
-                    &mut self.longitude,
-                );
-                ui.add(
-                    egui::Slider::new(&mut self.options.magnitude, -1.5..=16.).text("V 等級上限"),
-                );
-                ui.checkbox(&mut self.options.lines, "星座線");
-                ui.checkbox(&mut self.options.labels, "星座略号");
-                if let Some(data) = &self.data {
-                    ui.label(format!(
-                        "{}\n恒星 {} 件・星座 {} 件",
-                        data.root.display(),
-                        data.stars.len(),
-                        data.constellations.len()
-                    ));
-                }
-            });
-        self.settings = settings;
+        self.settings_windows(ctx);
         egui::Window::new("選択天体の情報")
             .open(&mut self.info)
             .show(ctx, |ui| {
