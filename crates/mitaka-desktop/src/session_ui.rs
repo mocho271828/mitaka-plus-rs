@@ -74,6 +74,23 @@ impl App {
         v["solar_camera"] = json!({"target":self.solar.camera.target, "distance_au":self.solar.camera.distance, "yaw_deg":self.solar.camera.yaw,"pitch_deg":self.solar.camera.pitch, "roll_deg":self.solar.camera.roll,"fov_deg":45.0,"frame":null,"frame_is_orbit":false});
         v["selected_body"] = json!(self.solar.selected);
         self.objects.selections.apply_to(v);
+        let layers = &self.solar.layers;
+        v["planets"]["visible"] = json!(layers.visible);
+        v["planets"]["labels"] = json!(layers.labels);
+        v["planets"]["axes"] = json!(layers.axes);
+        v["sky_selected_body"] = json!(layers.sky_selected);
+        v["horizon_selected_body"] = json!(layers.horizon_selected);
+        for (key, scale) in [
+            "space_planet",
+            "space_sun",
+            "planetarium_planet",
+            "planetarium_sun_moon",
+        ]
+        .into_iter()
+        .zip(layers.scales)
+        {
+            v["radius_display"][key] = json!(scale);
+        }
         let surface = &self.solar.surfaces;
         v["earth_layers"] = json!({"clouds":surface.clouds,"city_lights":surface.lights});
         v["eclipse"]["shadows"] = json!(surface.eclipse);
@@ -160,6 +177,19 @@ impl App {
         self.selected = None;
         self.surface = None;
         self.galaxies = None;
+        let layers = &mut self.solar.layers;
+        layers.visible = v["planets"]["visible"].as_bool().unwrap();
+        layers.labels = v["planets"]["labels"].as_bool().unwrap();
+        layers.axes = v["planets"]["axes"].as_bool().unwrap();
+        layers.sky_selected = v["sky_selected_body"].as_f64().map(|i| i as usize);
+        layers.horizon_selected = v["horizon_selected_body"].as_f64().map(|i| i as usize);
+        layers.scales = [
+            "space_planet",
+            "space_sun",
+            "planetarium_planet",
+            "planetarium_sun_moon",
+        ]
+        .map(|k| num(&v["radius_display"], k) as f32);
         let surface = &mut self.solar.surfaces;
         surface.clouds = v["earth_layers"]["clouds"].as_bool().unwrap();
         surface.lights = v["earth_layers"]["city_lights"].as_bool().unwrap();
