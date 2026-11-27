@@ -31,6 +31,42 @@ impl Default for Sample {
         }
     }
 }
+/// 欠測・破損した地形でも通常の天体描画と選択深度を保持する。
+pub(super) struct Layer {
+    source: Option<Source>,
+    file: &'static str,
+    pub warning: Option<String>,
+}
+impl Layer {
+    pub fn open(root: &Path, body: usize) -> Self {
+        let file = crate::surface::terrain_file(body).expect("terrain candidate has a source path");
+        let result = Source::open(root, body);
+        let warning = result
+            .as_ref()
+            .err()
+            .filter(|e| e.kind() != io::ErrorKind::NotFound)
+            .map(|e| format!("{file}: {e}（基準球面で表示）"));
+        Self {
+            source: result.ok(),
+            file,
+            warning,
+        }
+    }
+    pub fn render(
+        &mut self,
+        view: &View,
+        mode: Amplification,
+        preview: bool,
+    ) -> Option<Vec<Sample>> {
+        // 描画の資源上限は視点に依存するので、次の視点では同じ地形を再評価する。
+        let result = self.source.as_mut()?.render(view, mode, preview);
+        self.warning = result
+            .as_ref()
+            .err()
+            .map(|e| format!("{}: {e}（基準球面で表示）", self.file));
+        result.ok()
+    }
+}
 pub(super) struct Source {
     source: Terrain,
     unit_radius: f64,
@@ -325,8 +361,10 @@ mod tests {
                 ..Default::default()
             };
             let rect = Rect::from_min_size(Pos2::ZERO, egui::vec2(65., 65.));
-            for supplied in [false, true] {
-                if supplied {
+            for supplied in ["absent", "truncated", "ready"] {
+                if supplied == "truncated" {
+                    std::fs::write(root.path().join(file), [1u8, 2]).unwrap();
+                } else if supplied == "ready" {
                     let mut bytes = Vec::new();
                     for f in [1_f32, (RADII_KM[body] * 1000.) as f32] {
                         bytes.extend(f.to_le_bytes());
@@ -351,9 +389,15 @@ mod tests {
                     0.,
                     0.,
                     Amplification::Actual,
-                )
-                .unwrap();
-                assert_eq!(relief.map(|m| m.central_height), supplied.then_some(400.));
+                );
+                if supplied == "truncated" {
+                    assert!(relief.is_err());
+                } else {
+                    assert_eq!(
+                        relief.unwrap().map(|m| m.central_height),
+                        (supplied == "ready").then_some(400.)
+                    );
+                }
                 let mut surfaces = sphere::Surfaces::new();
                 surfaces.eclipse.shadows = false;
                 let ctx = egui::Context::default();
@@ -373,7 +417,16 @@ mod tests {
                         )
                         .unwrap());
                 });
-                let want = radius - if supplied { 0.4 / KM_PER_AU } else { 0. };
+                assert_eq!(
+                    surfaces.warnings().any(|s| s.starts_with(file)),
+                    supplied == "truncated"
+                );
+                let want = radius
+                    - if supplied == "ready" {
+                        0.4 / KM_PER_AU
+                    } else {
+                        0.
+                    };
                 let depth = surfaces.body_depth_at(body, rect.center());
                 assert!(
                     (depth - want).abs() < 1e-13,

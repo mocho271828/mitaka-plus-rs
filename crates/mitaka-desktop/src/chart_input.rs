@@ -27,18 +27,12 @@ pub(super) fn gesture(input: &InputState) -> (Vec2, f32) {
     )
 }
 
-pub(super) fn focus(
+pub(super) fn focus_target(
     picking: crate::viewer::Picking,
     double_clicked: bool,
     coords: Option<[f64; 2]>,
-    view: crate::projection::View,
-    camera: &mut crate::projection::Camera,
-) {
-    if picking == crate::viewer::Picking::Click && double_clicked {
-        if let Some(coords) = coords {
-            camera.center(view, coords);
-        }
-    }
+) -> Option<[f64; 2]> {
+    coords.filter(|_| picking == crate::viewer::Picking::Click && double_clicked)
 }
 
 #[cfg(test)]
@@ -53,11 +47,13 @@ mod tests {
         for view in [View::Sky, View::Horizon] {
             let mut camera = Camera::default();
             let target = [160., 20.];
-            focus(Picking::Hover, true, Some(target), view, &mut camera);
-            focus(Picking::Click, false, Some(target), view, &mut camera);
-            focus(Picking::Click, true, None, view, &mut camera);
-            assert_eq!(camera.zoom, 1.);
-            focus(Picking::Click, true, Some(target), view, &mut camera);
+            assert_eq!(focus_target(Picking::Hover, true, Some(target)), None);
+            assert_eq!(focus_target(Picking::Click, false, Some(target)), None);
+            assert_eq!(focus_target(Picking::Click, true, None), None);
+            camera.center(
+                view,
+                focus_target(Picking::Click, true, Some(target)).unwrap(),
+            );
             assert_eq!(camera.zoom, 4.);
             assert_eq!(camera.position(view, target), [0.5, 0.5]);
         }
