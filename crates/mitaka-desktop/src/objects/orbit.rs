@@ -34,15 +34,21 @@ impl Curve<'_> {
             .is_some_and(|((p, _), [(a, _), (b, _)])| chord_distance(p, a, b) <= 0.25)
     }
 
+    fn crosses_view(&self, a: Point, b: Point) -> bool {
+        self.camera
+            .project_segment(a, b, self.rect)
+            .is_some_and(|[a, b]| crate::solar::clip_line(self.rect, a.0, b.0).is_some())
+    }
+
     fn subdivide(
         &self,
         a: (f64, Point),
         b: (f64, Point),
-        depth: u8,
+        depth: usize,
         emit: &mut impl FnMut(Point, Point),
     ) {
         let mid = a.0 + (b.0 - a.0) * 0.5;
-        if depth >= 6 || mid <= a.0 || mid >= b.0 {
+        if mid <= a.0 || mid >= b.0 {
             emit(a.1, b.1);
             return;
         }
@@ -51,7 +57,8 @@ impl Curve<'_> {
         };
         if self.near_chord(p, a.1, b.1) {
             emit(a.1, b.1);
-        } else {
+        } else if depth < 6 || self.crosses_view(a.1, p) || self.crosses_view(p, b.1) {
+            // 原版の6段以降も、画面にかかる局所弧は投影誤差を満たすまで分割する。
             self.subdivide(a, (mid, p), depth + 1, emit);
             self.subdivide((mid, p), b, depth + 1, emit);
         }
@@ -198,12 +205,69 @@ mod tests {
         }
     }
 
-    #[test]
-    fn zoomed_ellipse_follows_live_body_and_leaves_missing_interval_open() {
+    fn element_fixture(source: &[u8]) -> tempfile::TempDir {
         let root = tempfile::tempdir().unwrap();
         let dir = root.path().join("orbits/asteroids");
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("test.dat"), b"Name: Test\nType: Asteroid\nNo: 1\nEpoch: 2451546\na: 1.5\nn: 0.6\ni: 4\nnode: 15\nw: 5\ne: 0.4\nM0: 57\n").unwrap();
+        std::fs::write(dir.join("test.dat"), source).unwrap();
+        root
+    }
+
+    #[test]
+    fn sparse_orbits_keep_both_sides_of_the_marker_within_the_screen_error_limit() {
+        let root = element_fixture(b"Name: Circle\nType: Asteroid\nNo: 1\nEpoch: 2451545\na: 1\nn: 1\ni: 0\nnode: 0\nw: 0\ne: 0\nM0: 0\n");
+        let catalog = Catalog::load(Kind::Small, root.path()).unwrap();
+        let record = catalog.small_record(0).unwrap();
+        let jd = 2451545.;
+        let marker = record.position(jd).unwrap();
+        let camera = SolarCamera {
+            target: marker,
+            pitch: 90.,
+            yaw: 0.,
+            distance: 0.001,
+            ..Default::default()
+        };
+        let rect = Rect::from_min_size(Pos2::ZERO, eframe::egui::vec2(800., 600.));
+        let curve = Curve {
+            record,
+            camera,
+            rect,
+        };
+        for count in [3, 2] {
+            let path = catalog
+                .small_path(
+                    0,
+                    Sampling {
+                        count,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            let mut lines = Vec::new();
+            curve.visit(&path, jd, marker, |a, b| {
+                if let Some([a, b]) = camera.project_segment(a, b, rect) {
+                    lines.push((a.0, b.0));
+                }
+            });
+            let mut worst = 0.0_f32;
+            for step in -20..=20 {
+                let phase = f64::from(step) * 0.00002;
+                let p = record.position(jd + phase.to_degrees()).unwrap();
+                let screen = camera.project(p, rect).unwrap().0;
+                assert!(rect.contains(screen));
+                let error = lines
+                    .iter()
+                    .map(|&(a, b)| chord_distance(screen, a, b))
+                    .fold(f32::INFINITY, f32::min);
+                worst = worst.max(error);
+            }
+            eprintln!("{count} samples: maximum screen error {worst} px");
+            assert!(worst < 0.6, "{count} samples: {worst} px");
+        }
+    }
+    #[test]
+    fn zoomed_ellipse_follows_live_body_and_leaves_missing_interval_open() {
+        let root = element_fixture(b"Name: Test\nType: Asteroid\nNo: 1\nEpoch: 2451546\na: 1.5\nn: 0.6\ni: 4\nnode: 15\nw: 5\ne: 0.4\nM0: 57\n");
         check(root.path(), 1, Encoding::ElementText, 0.001);
     }
     #[test]
