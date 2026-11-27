@@ -26,7 +26,7 @@ pub struct Chart<'a> {
     pub rect: Rect,
 }
 impl Chart<'_> {
-    fn point(&self, coord: [f64; 2]) -> Pos2 {
+    pub(crate) fn point(&self, coord: [f64; 2]) -> Pos2 {
         let [x, y] = self.camera.position(self.view, coord);
         Pos2::new(
             self.rect.left() + x as f32 * self.rect.width(),

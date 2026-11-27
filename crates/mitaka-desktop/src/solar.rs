@@ -123,7 +123,7 @@ impl SolarCamera {
             [cp * cy, cp * sy, sp],
         ]
     }
-    fn project(self, pos: Point, rect: Rect) -> Option<(Pos2, f64)> {
+    pub(crate) fn project(self, pos: Point, rect: Rect) -> Option<(Pos2, f64)> {
         let [right, up, out] = self.basis();
         let rel = minus(pos, self.target);
         let depth = self.distance - dot(rel, out);

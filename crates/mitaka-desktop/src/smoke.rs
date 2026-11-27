@@ -19,6 +19,7 @@ enum Scene {
     Earth,
     Mars,
     Galaxy,
+    ObjectBrowser,
 }
 impl Scene {
     fn name(self) -> &'static str {
@@ -31,6 +32,7 @@ impl Scene {
             Self::Earth => "earth",
             Self::Mars => "mars",
             Self::Galaxy => "galaxy",
+            Self::ObjectBrowser => "object-browser",
         }
     }
 }
@@ -57,6 +59,7 @@ impl Smoke {
                     Scene::Earth,
                     Scene::Mars,
                     Scene::Galaxy,
+                    Scene::ObjectBrowser,
                 ],
                 index: 0,
                 entered: false,
@@ -104,6 +107,13 @@ impl Smoke {
                 app.surface = Some(ground);
                 app.view = View::Surface;
             }
+            Scene::ObjectBrowser => {
+                if !data.root.join("star_names_HIP.dat").try_exists()? {
+                    return Ok(false);
+                }
+                app.objects.inspect_sirius(data)?;
+                app.view = View::Sky;
+            }
             Scene::Galaxy => {
                 if !data.root.join("ourgalaxy_model.dat").try_exists()? {
                     eprintln!("SKIP galaxy（天の川モデルがありません）");
@@ -139,6 +149,11 @@ impl Smoke {
             if !g.ready()? {
                 return Ok(false);
             }
+        }
+        if scene == Scene::ObjectBrowser && app.selected != Some(32349) {
+            return Err(io::Error::other(
+                "シリウスに対応するHIP 32349へ視点が移りません",
+            ));
         }
         if !self.waiting {
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::new(
