@@ -84,6 +84,7 @@ impl App {
         v["planets"]["axes"] = json!(layers.axes);
         v["sky_selected_body"] = json!(layers.sky_selected);
         v["horizon_selected_body"] = json!(layers.horizon_selected);
+        v["radius_display"]["mode"] = json!(u8::from(!layers.keep_radius));
         for (key, scale) in [
             "space_planet",
             "space_sun",
@@ -182,6 +183,7 @@ impl App {
         layers.axes = v["planets"]["axes"].as_bool().unwrap();
         layers.sky_selected = v["sky_selected_body"].as_f64().map(|i| i as usize);
         layers.horizon_selected = v["horizon_selected_body"].as_f64().map(|i| i as usize);
+        layers.keep_radius = num(&v["radius_display"], "mode") == 0.;
         layers.scales = [
             "space_planet",
             "space_sun",

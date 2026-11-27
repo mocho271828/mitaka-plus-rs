@@ -16,6 +16,7 @@ pub(crate) struct PlanetLayers {
     pub labels: bool,
     pub axes: bool,
     pub scales: [f32; 4],
+    pub keep_radius: bool,
     pub sky_selected: Option<usize>,
     pub horizon_selected: Option<usize>,
 }
@@ -26,6 +27,7 @@ impl Default for PlanetLayers {
             labels: true,
             axes: false,
             scales: [1.; 4],
+            keep_radius: false,
             sky_selected: None,
             horizon_selected: None,
         }
@@ -87,7 +89,11 @@ impl PlanetLayers {
             ui.checkbox(&mut self.axes, "自転軸");
         });
         ui.collapsing("天体の表示倍率", |ui| {
-            for (name, scale) in [
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.keep_radius, false, "視点距離を保つ");
+                ui.selectable_value(&mut self.keep_radius, true, "見かけの半径を保つ");
+            });
+            for (i, (name, scale)) in [
                 "宇宙の惑星・月",
                 "宇宙の太陽",
                 "星図の惑星",
@@ -95,13 +101,16 @@ impl PlanetLayers {
             ]
             .into_iter()
             .zip(&mut self.scales)
+            .enumerate()
             {
                 ui.horizontal(|ui| {
                     ui.label(name);
-                    ui.add(
+                    ui.add_enabled(
+                        i >= 2 || !self.keep_radius,
                         egui::DragValue::new(scale)
                             .speed(0.1)
-                            .range(0.001..=1000000.),
+                            .range(0.001..=1000000.)
+                            .clamp_existing_to_range(false),
                     );
                 });
             }

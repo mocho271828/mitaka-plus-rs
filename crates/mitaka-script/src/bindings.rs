@@ -138,6 +138,7 @@ pub const FIELDS: &[Field] = &[
     field("Camera", "azimuth", "azimuth", 12, Finite),
     field("Camera", "altitude", "altitude", 89, Finite),
     field("Planets", "topoAmplification", "topoAmplification", 86, Index(5)),
+    field("Planets", "scaleMode", "radiusScaleMode", 88, Index(1)),
     field("Planets", "atmosphere", "atmosphereMode", 71, Index(2)),
     field("GUI", "fullScreen", "fullScreen", 41, Bool),
     field("Milkyway", "type", "milkyWay", 21, Text),
