@@ -1,4 +1,5 @@
 //! CF96 の太陽中心J2000赤道座標を黄道座標へ変換し、AUのまま透視投影する。
+mod eclipse;
 mod scales;
 pub(crate) mod sphere;
 use eframe::egui::{self, Color32, Pos2, Rect, Stroke};
@@ -69,6 +70,9 @@ struct Scene {
     jd: f64,
     bodies: [Point; 11],
     orbits: Vec<Vec<Point>>,
+    jupiter_casters: Vec<mitaka_core::eclipse::Sphere>,
+    eclipse_warnings: Vec<String>,
+    satellite_positions_checked: bool,
 }
 impl Scene {
     fn load(system: &Cf96Ephemeris, jd: f64) -> io::Result<Self> {
@@ -100,7 +104,14 @@ impl Scene {
             })
             .collect::<io::Result<Vec<_>>>()?;
         orbits.push(moon_path);
-        Ok(Self { jd, bodies, orbits })
+        Ok(Self {
+            jd,
+            bodies,
+            orbits,
+            jupiter_casters: vec![],
+            eclipse_warnings: vec![],
+            satellite_positions_checked: false,
+        })
     }
 }
 #[derive(Clone, Copy, PartialEq)]
@@ -213,6 +224,8 @@ pub struct Solar {
     flight: Option<Flight>,
     pub show_controls: bool,
     pub(crate) surfaces: sphere::Surfaces,
+    eclipse_source: Option<Result<eclipse::Source, String>>,
+    eclipse_overlay: eclipse::Overlay,
     surface_flight: Option<SurfaceFlight>,
     pub landed: Option<usize>,
 }
@@ -228,6 +241,8 @@ impl Default for Solar {
             flight: None,
             show_controls: false,
             surfaces: sphere::Surfaces::new(),
+            eclipse_source: None,
+            eclipse_overlay: Default::default(),
             surface_flight: None,
             landed: None,
         }
@@ -390,7 +405,18 @@ impl Solar {
                 ui.checkbox(&mut self.orbits, "惑星の軌跡");
                 ui.checkbox(&mut self.surfaces.clouds, "地球の雲");
                 ui.checkbox(&mut self.surfaces.lights, "都市光");
-                ui.checkbox(&mut self.surfaces.eclipse, "地球と月の食");
+                ui.collapsing("食の影", |ui| {
+                    let e = &mut self.surfaces.eclipse;
+                    ui.checkbox(&mut e.shadows, "表面の影");
+                    ui.checkbox(&mut e.borders, "本影・半影の境界線");
+                    ui.checkbox(&mut e.umbra, "本影錐");
+                    ui.checkbox(&mut e.penumbra, "半影錐");
+                    if let Some(scene) = &self.scene {
+                        for warning in &scene.eclipse_warnings {
+                            ui.label(warning);
+                        }
+                    }
+                });
                 ui.horizontal(|ui| {
                     ui.label("大気");
                     for (mode, label) in [
@@ -423,6 +449,24 @@ impl Solar {
         layers: &crate::layers::LayerOptions,
     ) -> io::Result<()> {
         self.prepare(system, jd)?;
+        if let Some(scene) = self
+            .scene
+            .as_mut()
+            .filter(|s| !s.satellite_positions_checked)
+        {
+            let source = self
+                .eclipse_source
+                .get_or_insert_with(|| eclipse::Source::load(root).map_err(|e| e.to_string()));
+            match source {
+                Ok(source) => {
+                    if let Err(error) = source.apply(scene, system) {
+                        scene.eclipse_warnings.push(error.to_string());
+                    }
+                }
+                Err(error) => scene.eclipse_warnings.push(error.clone()),
+            }
+            scene.satellite_positions_checked = true;
+        }
         let (response, painter) =
             ui.allocate_painter(ui.available_size(), egui::Sense::click_and_drag());
         let rect = response.rect;
@@ -616,6 +660,10 @@ impl Solar {
                 }
             }
         }
+        if self.layers.visible {
+            self.eclipse_overlay
+                .draw(&painter, rect, scene, self.camera, self.surfaces.eclipse)?;
+        }
         if let Some(i) = pick {
             self.stop();
             self.selected = i;
@@ -672,6 +720,9 @@ mod tests {
             scene: Some(Scene {
                 jd,
                 bodies,
+                jupiter_casters: vec![],
+                eclipse_warnings: vec![],
+                satellite_positions_checked: true,
                 orbits: vec![],
             }),
             ..Solar::default()

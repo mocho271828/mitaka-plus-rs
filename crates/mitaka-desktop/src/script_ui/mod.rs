@@ -144,7 +144,10 @@ impl App {
                 "topoAmplification":self.terrain_amplification.stage(),
                 "earthClouds":self.solar.surfaces.clouds,
                 "earthCityLights":self.solar.surfaces.lights,
-                "shadows":self.solar.surfaces.eclipse,
+                "shadows":self.solar.surfaces.eclipse.shadows,
+                "shadowBorders":self.solar.surfaces.eclipse.borders,
+                "shadowUmbra":self.solar.surfaces.eclipse.umbra,
+                "shadowPenumbra":self.solar.surfaces.eclipse.penumbra,
                 "atmosphereMode":self.solar.surfaces.air as u8,
                 "fullScreen":ctx.input(|i| i.viewport().fullscreen.unwrap_or(false)),
                 "targetBrowser":self.objects.open,
@@ -162,7 +165,7 @@ impl App {
                 match msg["kind"].as_u64() {
                     Some(kind @ (3 | 4 | 12 | 89..=105)) => self.camera_action(kind, msg, ctx)?,
                     Some(kind @ (0 | 2 | 19 | 20 | 72..=78)) => self.time_action(kind, msg)?,
-                    Some(kind @ (27..=30 | 69 | 70 | 79)) => {
+                    Some(kind @ (27..=30 | 69 | 70 | 79..=82)) => {
                         let flag = msg["enabled"].as_bool().ok_or("真偽値が必要です")?;
                         match kind {
                             27 => self.solar.layers.visible = flag,
@@ -171,7 +174,10 @@ impl App {
                             30 => self.solar.layers.axes = flag,
                             69 => self.solar.surfaces.clouds = flag,
                             70 => self.solar.surfaces.lights = flag,
-                            _ => self.solar.surfaces.eclipse = flag,
+                            79 => self.solar.surfaces.eclipse.shadows = flag,
+                            80 => self.solar.surfaces.eclipse.borders = flag,
+                            81 => self.solar.surfaces.eclipse.umbra = flag,
+                            _ => self.solar.surfaces.eclipse.penumbra = flag,
                         }
                     }
                     Some(kind @ (13..=17 | 41)) => {

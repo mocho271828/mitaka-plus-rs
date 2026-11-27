@@ -98,7 +98,7 @@ impl App {
         v["terrain_amplification"] = json!(self.terrain_amplification.stage());
         let surface = &self.solar.surfaces;
         v["earth_layers"] = json!({"clouds":surface.clouds,"city_lights":surface.lights});
-        v["eclipse"]["shadows"] = json!(surface.eclipse);
+        v["eclipse"] = json!({"shadows":surface.eclipse.shadows, "shadow_borders":surface.eclipse.borders,"shadow_umbra":surface.eclipse.umbra,"shadow_penumbra":surface.eclipse.penumbra});
         v["atmosphere"] = json!({"mode":surface.air as u8,"intensity":surface.intensity});
         let p = &self.playback;
         v["plus_time"] = json!({"speed":p.plus_speed,"step":p.plus_step,"value_days":p.plus_value});
@@ -192,7 +192,12 @@ impl App {
         let surface = &mut self.solar.surfaces;
         surface.clouds = v["earth_layers"]["clouds"].as_bool().unwrap();
         surface.lights = v["earth_layers"]["city_lights"].as_bool().unwrap();
-        surface.eclipse = v["eclipse"]["shadows"].as_bool().unwrap();
+        surface.eclipse = mitaka_core::eclipse::display::Options {
+            shadows: v["eclipse"]["shadows"].as_bool().unwrap(),
+            borders: v["eclipse"]["shadow_borders"].as_bool().unwrap(),
+            umbra: v["eclipse"]["shadow_umbra"].as_bool().unwrap(),
+            penumbra: v["eclipse"]["shadow_penumbra"].as_bool().unwrap(),
+        };
         surface.air =
             crate::solar::sphere::Air::from_index(num(&v["atmosphere"], "mode") as u64).unwrap();
         surface.intensity = num(&v["atmosphere"], "intensity");
