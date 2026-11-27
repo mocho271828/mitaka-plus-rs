@@ -721,7 +721,7 @@ impl App {
             frame: &frame,
             rect,
         };
-        let click = self.picking.pointer(&response);
+        let pointer = self.picking.pointer(&response);
         let Some(data) = self.data.as_ref() else {
             return;
         };
@@ -743,18 +743,41 @@ impl App {
                 rect,
             );
         }
-        let click = click.filter(|p| !show_landscape || !self.landscape_render.opaque_at(*p));
-        let pick = chart.paint(&painter, data, &self.options, self.selected, click);
-        let body_pick = planet_layers::positions(&data.ephemeris, self.jd)
-            .ok()
-            .and_then(|bodies| self.solar.layers.paint(&chart, &painter, &bodies, click));
+        let opaque = |p| show_landscape && self.landscape_render.opaque_at(p);
+        let mut pick = pointer
+            .filter(|p| !opaque(*p))
+            .map(|p| chart::ChartPick::new(p, &opaque));
+        chart.paint(&painter, data, &self.options, self.selected, pick.as_mut());
+        if let Ok(bodies) = planet_layers::positions(&data.ephemeris, self.jd) {
+            self.solar
+                .layers
+                .paint(&chart, &painter, &bodies, pick.as_mut());
+        }
         self.object_on_sky(&chart, &painter);
+        let moving = view == View::Horizon
+            && self.objects.paint_horizon(
+                data,
+                [self.jd, self.latitude, self.longitude],
+                objects::horizon::Canvas {
+                    chart: &chart,
+                    painter: &painter,
+                    pointer,
+                    nearest: pick.as_ref().map_or(f32::INFINITY, |p| p.distance_sq),
+                    opaque: &opaque,
+                    picking: self.picking,
+                },
+            );
         if show_landscape {
             self.landscape_render.paint(&painter, rect);
         }
-        if click.is_some() {
-            self.solar.layers.select(view, body_pick);
-            self.selected = if body_pick.is_some() { None } else { pick };
+        if pointer.is_some() {
+            let (star, body) = match pick.and_then(|p| p.target).filter(|_| !moving) {
+                Some(chart::ChartTarget::Star(hip)) => (Some(hip), None),
+                Some(chart::ChartTarget::Body(id)) => (None, Some(id)),
+                None => (None, None),
+            };
+            self.solar.layers.select(view, body);
+            self.selected = star;
             ui.ctx().request_repaint();
         }
     }

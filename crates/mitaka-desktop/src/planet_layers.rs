@@ -1,10 +1,10 @@
 //! sky_model.cpp と radius_display.cpp の地心視位置と模式半径。
 use super::{
-    chart::Chart,
+    chart::{Chart, ChartPick, ChartTarget},
     projection::View,
     solar::{COLORS, NAMES},
 };
-use eframe::egui::{self, Color32, FontId, Pos2};
+use eframe::egui::{self, Color32, FontId};
 use mitaka_core::{
     astronomy::equatorial_coordinates,
     ephemeris::Cf96Ephemeris,
@@ -121,16 +121,14 @@ impl PlanetLayers {
         chart: &Chart<'_>,
         painter: &egui::Painter,
         bodies: &[SkyBody],
-        click: Option<Pos2>,
-    ) -> Option<usize> {
+        mut pick: Option<&mut ChartPick<'_>>,
+    ) {
         if !self.visible && !self.labels {
-            return None;
+            return;
         }
-        let mut closest = f32::INFINITY;
-        let mut picked = None;
         for body in bodies {
             let [ra, dec] = body.equatorial;
-            let Some(coords) = chart.observed(ra as f32, dec as f32) else {
+            let Some(coords) = chart.observed(ra, dec) else {
                 continue;
             };
             let p = chart.point(coords);
@@ -141,6 +139,9 @@ impl PlanetLayers {
             }
             if self.visible {
                 painter.circle_filled(p, r, COLORS[id]);
+                if let Some(pick) = pick.as_deref_mut() {
+                    pick.consider(ChartTarget::Body(id), p, r.max(8.));
+                }
             }
             if self.labels {
                 painter.text(
@@ -154,20 +155,57 @@ impl PlanetLayers {
             if self.selected(chart.view) == Some(id) {
                 painter.circle_stroke(p, (r + 4.).max(9.), egui::Stroke::new(1_f32, Color32::GOLD));
             }
-            if let Some(d) = click
-                .map(|q| p.distance(q))
-                .filter(|d| *d <= r.max(8.) && *d < closest)
-            {
-                closest = d;
-                picked = Some(id);
-            }
         }
-        picked
     }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn picking_prefers_nearest_visible_center_then_enlarged_marker() {
+        use crate::projection::Camera;
+        use mitaka_core::astronomy::ObservationFrame;
+        let frame = ObservationFrame::new(0., 0., 2451545.).unwrap();
+        let chart = Chart {
+            view: View::Sky,
+            camera: Camera::default(),
+            frame: &frame,
+            rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1080., 700.)),
+        };
+        // J2000のHIP 92111と太陽は全天図で約2.6pxしか離れていない。
+        let star = chart.point([281.5858, -22.3922]);
+        let sun = SkyBody {
+            id: 0,
+            equatorial: [281.29, -23.03],
+            distance_au: 1.,
+        };
+        let center = chart.point(sun.equatorial);
+        let bodies = [sun];
+        let mut layers = PlanetLayers::default();
+        let ctx = egui::Context::default();
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            let painter = ctx.layer_painter(egui::LayerId::background());
+            let mut pick = ChartPick::new(star, &|_| false);
+            pick.consider(ChartTarget::Star(92111), star, 8.);
+            layers.paint(&chart, &painter, &bodies, Some(&mut pick));
+            assert_eq!(pick.target, Some(ChartTarget::Star(92111)));
+
+            let mut tie = ChartPick::new(center, &|_| false);
+            tie.consider(ChartTarget::Star(1), center, 8.);
+            layers.paint(&chart, &painter, &bodies, Some(&mut tie));
+            assert_eq!(tie.target, Some(ChartTarget::Body(0)));
+
+            layers.scales[3] = 8.;
+            let mut outer = ChartPick::new(center + egui::vec2(20., 0.), &|_| false);
+            layers.paint(&chart, &painter, &bodies, Some(&mut outer));
+            assert_eq!(outer.target, Some(ChartTarget::Body(0)));
+
+            layers.visible = false;
+            let mut label_only = ChartPick::new(center, &|_| false);
+            layers.paint(&chart, &painter, &bodies, Some(&mut label_only));
+            assert_eq!(label_only.target, None);
+        });
+    }
     #[test]
     #[ignore = "実カタログの地心位置"]
     fn geocentric_j2000() {
