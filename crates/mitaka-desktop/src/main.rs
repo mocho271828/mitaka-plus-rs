@@ -557,7 +557,24 @@ impl App {
         self.camera_controls(ctx);
         self.journey_panel(ctx);
         self.object_panels(ctx);
-        self.solar.panel(ctx);
+        if self.solar.panel(ctx) {
+            if let Some(data) = &self.data {
+                match self
+                    .solar
+                    .prepare(&data.ephemeris, self.jd)
+                    .and_then(|_| self.solar.body_centers())
+                {
+                    Ok(centers) => {
+                        let (earth, moon) = (centers[3], centers[10]);
+                        self.motion.reset_solar_camera(&mut self.solar);
+                        self.objects.stop_tracking();
+                        self.solar.show_earth_moon(earth, moon);
+                        self.view = View::Solar;
+                    }
+                    Err(e) => self.error = Some(e.to_string()),
+                }
+            }
+        }
         if let Some(g) = &mut self.galaxies {
             if self.view == View::Solar {
                 g.panel(

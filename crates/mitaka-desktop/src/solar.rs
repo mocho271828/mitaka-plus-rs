@@ -242,13 +242,26 @@ pub(crate) struct ViewSettings<'a> {
     pub horizon_camera: Camera,
     pub terrain_mode: mitaka_core::terrain::Amplification,
 }
+#[derive(Clone, Copy, PartialEq)]
+enum Tracking {
+    None,
+    Body,
+    EarthMoon { following: bool },
+}
+
+impl Tracking {
+    fn earth_moon(self) -> bool {
+        matches!(self, Self::EarthMoon { .. })
+    }
+}
+
 pub struct Solar {
     scene: Option<Scene>,
     pub camera: SolarCamera,
     pub selected: usize,
     pub layers: crate::planet_layers::PlanetLayers,
     pub orbits: bool,
-    follow: bool,
+    tracking: Tracking,
     flight: Option<Flight>,
     pub show_controls: bool,
     pub(crate) surfaces: sphere::Surfaces,
@@ -271,7 +284,7 @@ impl Default for Solar {
             selected: 0,
             layers: Default::default(),
             orbits: true,
-            follow: false,
+            tracking: Tracking::None,
             flight: None,
             show_controls: false,
             surfaces: sphere::Surfaces::new(),
@@ -291,9 +304,27 @@ impl Default for Solar {
 impl Solar {
     pub fn prepare(&mut self, system: &Cf96Ephemeris, jd: f64) -> io::Result<()> {
         if self.scene.as_ref().is_none_or(|s| s.jd != jd) {
-            self.scene = Some(Scene::load(system, jd)?);
+            let scene = Scene::load(system, jd)?;
+            if self.tracking == (Tracking::EarthMoon { following: true }) {
+                self.camera.target = scale(plus(scene.bodies[3], scene.bodies[10]), 0.5);
+            }
+            self.scene = Some(scene);
         }
         Ok(())
+    }
+    // SolarSystemNavigation.mm は模式倍率を適用する前の地球・月位置で構図を決める。
+    pub fn show_earth_moon(&mut self, earth: Point, moon: Point) {
+        self.stop();
+        self.selected = 3;
+        let [x, y, z] = minus(moon, earth);
+        self.camera = SolarCamera {
+            target: scale(plus(earth, moon), 0.5),
+            yaw: y.atan2(x).to_degrees() + 90.,
+            pitch: 35.,
+            distance: (2.6 * x.hypot(y).hypot(z)).max(0.001),
+            ..Default::default()
+        };
+        self.tracking = Tracking::EarthMoon { following: true };
     }
     pub fn approach(&mut self, body: usize) -> io::Result<()> {
         let scene = self
@@ -306,7 +337,7 @@ impl Solar {
     fn stop_flight_to_target(&mut self, body: usize, dest: Point) {
         self.stop();
         self.selected = body;
-        self.follow = true;
+        self.tracking = Tracking::Body;
         self.camera.target = dest;
         self.camera.distance = RADII_KM[body] * 6. / KM_PER_AU;
     }
@@ -411,14 +442,15 @@ impl Solar {
         });
     }
     pub fn stop(&mut self) {
-        self.follow = false;
+        self.tracking = Tracking::None;
         self.flight = None;
         self.surface_flight = None;
         self.flight_site = None;
         self.horizon_overlay = None;
         self.landed = None;
     }
-    pub fn panel(&mut self, ctx: &egui::Context) {
+    pub fn panel(&mut self, ctx: &egui::Context) -> bool {
+        let mut earth_moon_requested = false;
         let mut open = self.show_controls;
         egui::Window::new("太陽系の天体と飛行")
             .open(&mut open)
@@ -445,6 +477,7 @@ impl Solar {
                         self.stop();
                     }
                 });
+                earth_moon_requested = ui.button("地球と月を接近表示").clicked();
                 self.layers.panel(ui);
                 ui.checkbox(&mut self.orbits, "惑星の軌跡");
                 ui.checkbox(&mut self.surfaces.clouds, "地球の雲");
@@ -482,6 +515,7 @@ impl Solar {
                 ui.label(format!("カメラ距離 {:.8} AU", self.camera.distance));
             });
         self.show_controls = open;
+        earth_moon_requested
     }
     pub fn draw(&mut self, ui: &mut egui::Ui, settings: ViewSettings<'_>) -> io::Result<()> {
         self.object_pass = None;
@@ -542,9 +576,14 @@ impl Solar {
                 &mut self.camera,
             )?;
         } else if response.dragged() {
-            self.stop();
+            if !self.tracking.earth_moon() {
+                self.stop();
+            }
             let d = response.drag_delta();
             if modifiers.shift || response.dragged_by(egui::PointerButton::Secondary) {
+                if self.tracking.earth_moon() {
+                    self.tracking = Tracking::EarthMoon { following: false };
+                }
                 let [r, u, _] = self.camera.basis();
                 let factor = 2. * self.camera.distance * (self.camera.fov * 0.5).to_radians().tan()
                     / f64::from(rect.height().max(1.));
@@ -563,11 +602,15 @@ impl Solar {
                 (-i.smooth_scroll_delta.y * 0.008).clamp(-2., 2.).exp() / i.zoom_delta()
             });
             if (factor - 1.).abs() > 1e-6 {
-                self.stop();
+                if !self.tracking.earth_moon() {
+                    self.stop();
+                }
                 if on_surface {
                     self.camera.fov = (self.camera.fov * f64::from(factor)).clamp(0.001, 90.);
                 } else {
-                    let min = if self.camera.frame.is_some() && !self.camera.frame_is_orbit {
+                    let min = if self.tracking.earth_moon() {
+                        0.0002
+                    } else if self.camera.frame.is_some() && !self.camera.frame_is_orbit {
                         1e-12
                     } else {
                         0.000005
@@ -593,11 +636,11 @@ impl Solar {
             self.camera.distance = ((1. - f) * flight.source.distance.ln() + f * end.ln()).exp();
             if time >= 1. {
                 self.flight = None;
-                self.follow = true;
+                self.tracking = Tracking::Body;
             } else {
                 ui.ctx().request_repaint();
             }
-        } else if self.follow {
+        } else if self.tracking == Tracking::Body {
             self.camera.target = dest;
         }
         self.sky_background.paint(
@@ -632,19 +675,25 @@ impl Solar {
             .and(self.flight_site)
             .and_then(|s| surface_flight::Overlay::new(s, self.camera, horizon_camera, rect));
         scales::paint(&painter, rect, self.camera, layers, observer, jd);
+        let earth_moon = self.tracking.earth_moon();
+        let moon_scale = if earth_moon {
+            1.
+        } else {
+            self.layers.moon_orbit_scale()
+        };
         if self.orbits {
             let stroke = Stroke::new(0.7_f32, Color32::from_rgb(59, 77, 100));
             for (i, path) in scene.orbits.iter().enumerate() {
+                if earth_moon && i != 9 {
+                    continue;
+                }
                 for segment in path.windows(2) {
                     if let (Some((a, _)), Some((b, _))) = (
                         self.camera.project(
                             if i == 9 {
                                 plus(
                                     scene.bodies[3],
-                                    scale(
-                                        minus(segment[0], scene.bodies[3]),
-                                        self.layers.moon_orbit_scale(),
-                                    ),
+                                    scale(minus(segment[0], scene.bodies[3]), moon_scale),
                                 )
                             } else {
                                 segment[0]
@@ -655,10 +704,7 @@ impl Solar {
                             if i == 9 {
                                 plus(
                                     scene.bodies[3],
-                                    scale(
-                                        minus(segment[1], scene.bodies[3]),
-                                        self.layers.moon_orbit_scale(),
-                                    ),
+                                    scale(minus(segment[1], scene.bodies[3]), moon_scale),
                                 )
                             } else {
                                 segment[1]
@@ -673,19 +719,19 @@ impl Solar {
                 }
             }
         }
-        self.object_pass = Some(painter.add(egui::Shape::Noop));
+        self.object_pass = (!earth_moon).then(|| painter.add(egui::Shape::Noop));
         let mut visible: Vec<_> = scene
             .bodies
             .iter()
             .enumerate()
             .filter_map(|(i, p)| {
-                if on_surface && i == self.selected {
+                if (earth_moon && !matches!(i, 3 | 10)) || (on_surface && i == self.selected) {
                     return None;
                 }
                 let p = if i == 10 {
                     plus(
                         scene.bodies[3],
-                        scale(minus(*p, scene.bodies[3]), self.layers.moon_orbit_scale()),
+                        scale(minus(*p, scene.bodies[3]), moon_scale),
                     )
                 } else {
                     *p
@@ -704,8 +750,12 @@ impl Solar {
                 as f32;
             let physical = radius;
             let factor = self.layers.scales[usize::from(i == 0)];
-            let radius = (radius.max(if i == 0 { 5. } else { 2.6 }) * factor)
-                .clamp(1., rect.width().max(rect.height()) * 2.);
+            let radius = if earth_moon {
+                physical.max(1.5)
+            } else {
+                (radius.max(if i == 0 { 5. } else { 2.6 }) * factor)
+                    .clamp(1., rect.width().max(rect.height()) * 2.)
+            };
             if !rect.expand(radius).contains(pos) {
                 continue;
             }
@@ -810,7 +860,9 @@ impl Solar {
         }
         if let Some(i) = pick {
             self.sky_selection = None;
-            self.stop();
+            if !earth_moon {
+                self.stop();
+            }
             self.selected = i;
             ui.ctx().request_repaint();
         }
@@ -849,6 +901,47 @@ mod tests {
         let rect = Rect::from_min_max(Pos2::ZERO, Pos2::new(640., 480.));
         assert_eq!(c.project(c.target, rect), Some((rect.center(), 100.)));
         assert!(c.project(scale(c.basis()[2], 101.), rect).is_none());
+    }
+    #[test]
+    fn earth_moon_composition_uses_physical_separation_and_distance_floor() {
+        let mut solar = Solar::default();
+        let rect = Rect::from_min_size(Pos2::ZERO, egui::vec2(600., 400.));
+        for separation in [0.0001, 0.0026] {
+            let (earth, moon) = ([1., 0., 0.], [1., separation, 0.]);
+            solar.show_earth_moon(earth, moon);
+            assert_eq!(solar.camera.target, [1., separation / 2., 0.]);
+            assert_eq!(solar.camera.distance, (separation * 2.6).max(0.001));
+            for body in [earth, moon] {
+                assert!(rect.contains(solar.camera.project(body, rect).unwrap().0));
+            }
+        }
+        solar.stop();
+        assert!(!solar.tracking.earth_moon());
+    }
+
+    #[test]
+    #[ignore = "利用者の CF96 暦表"]
+    fn earth_moon_camera_tracks_the_pair_across_dates() {
+        let root = std::path::PathBuf::from(std::env::var_os("MITAKA_DATA_ROOT").unwrap());
+        let eph = Cf96Ephemeris::load(&root.join("cf96.dat")).unwrap();
+        let mut solar = Solar::default();
+        let rect = Rect::from_min_size(Pos2::ZERO, egui::vec2(600., 400.));
+        solar.prepare(&eph, 2451545.).unwrap();
+        let centers = solar.body_centers().unwrap();
+        solar.show_earth_moon(centers[3], centers[10]);
+        let distance = solar.camera.distance;
+        for days in [1., 7., 365.] {
+            solar.prepare(&eph, 2451545. + days).unwrap();
+            let centers = solar.body_centers().unwrap();
+            assert_eq!(
+                solar.camera.target,
+                scale(plus(centers[3], centers[10]), 0.5)
+            );
+            assert_eq!(solar.camera.distance, distance);
+            for body in [3, 10] {
+                assert!(rect.contains(solar.camera.project(centers[body], rect).unwrap().0));
+            }
+        }
     }
     #[test]
     fn low_altitude_view_preserves_shortest_heading_arc() {
