@@ -17,9 +17,22 @@ pub(crate) struct Site {
     pub elevation: f64,
     pub roll: f64,
     pub terrain: f64,
-    pub(super) last: Option<f64>,
+    pub(crate) last: Option<f64>,
 }
 impl Site {
+    pub(crate) fn ground(body: usize, lat: f64, lon: f64, terrain_m: f64, look: Camera) -> Self {
+        Self {
+            body,
+            lat,
+            lon,
+            height: 0.002,
+            terrain: terrain_m / 1000.,
+            heading: look.longitude,
+            elevation: look.latitude,
+            roll: look.roll,
+            last: None,
+        }
+    }
     pub(crate) fn decode(v: &Value) -> io::Result<Option<Self>> {
         let Some(s) = v.get("surface_site") else {
             return Ok(None);

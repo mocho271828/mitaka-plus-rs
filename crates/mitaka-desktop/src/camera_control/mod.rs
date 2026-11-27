@@ -80,7 +80,7 @@ pub(crate) struct State {
     pub controls: bool,
     entry: String,
     duration: f64,
-    mode_duration: f64,
+    pub(crate) mode_duration: f64,
     zoom_mode: u8,
     az: Option<Scalar>,
     alt: Option<Scalar>,
@@ -118,6 +118,24 @@ impl Default for State {
             free_physical: false,
             site: None,
         }
+    }
+}
+impl State {
+    pub(crate) fn reset_solar_camera(&mut self, solar: &mut crate::solar::Solar) {
+        self.site = None;
+        self.free_physical = false;
+        self.physical_flight = None;
+        self.journey.flight = None;
+        self.place = None;
+        self.place_name = None;
+        self.target = None;
+        self.turn = None;
+        self.az = None;
+        self.alt = None;
+        self.zoom = None;
+        self.fov = None;
+        solar.stop();
+        solar.camera = Default::default();
     }
 }
 fn tick(slot: &mut Option<Scalar>, now: Instant) -> Option<f64> {
@@ -200,8 +218,18 @@ impl App {
             .map_or(180. / self.horizon.zoom, |(_, f)| f)
     }
     pub(crate) fn set_horizon_fov(&mut self, f: f64) {
-        self.horizon.zoom = 180. / f.max(1e-9);
+        self.horizon.zoom = 180. / f.max(crate::projection::MIN_HORIZON_FOV);
         self.motion.horizon_fov = Some((self.horizon.zoom, f));
+    }
+    pub(crate) fn zoom_chart_at(&mut self, factor: f64, anchor: [f64; 2]) {
+        if self.view == View::Horizon {
+            let fov = self
+                .horizon
+                .zoom_horizon_at(self.horizon_fov(), factor, anchor);
+            self.motion.horizon_fov = Some((self.horizon.zoom, fov));
+        } else {
+            self.sky.zoom_sky_at(factor, anchor);
+        }
     }
     pub(crate) fn camera_snapshot(&self, mut msg: Value) -> Value {
         let q = self.orientation().ok();
@@ -647,5 +675,32 @@ mod motion_tests {
         );
         assert!(next.is_none());
         assert_eq!(signed(359. - 1.), -2.);
+    }
+}
+
+#[cfg(test)]
+mod reset_tests {
+    use super::*;
+    #[test]
+    fn solar_reset_leaves_navigation_and_retains_display_settings() {
+        let mut motion = State {
+            site: Some(session::Site::on_sphere(4, 35., 137.)),
+            free_physical: true,
+            ..Default::default()
+        };
+        let mut solar = crate::solar::Solar::default();
+        solar.camera.distance = 0.0001;
+        solar.selected = 4;
+        solar.orbits = false;
+        solar.surfaces.lights = true;
+        solar.surfaces.clouds = false;
+        solar.layers.axes = true;
+        motion.reset_solar_camera(&mut solar);
+        assert_eq!(solar.camera, crate::solar::SolarCamera::default());
+        assert!(motion.site.is_none() && !motion.free_physical);
+        assert_eq!(solar.selected, 4);
+        assert!(
+            !solar.orbits && solar.surfaces.lights && !solar.surfaces.clouds && solar.layers.axes
+        );
     }
 }

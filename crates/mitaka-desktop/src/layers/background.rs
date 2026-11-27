@@ -251,12 +251,16 @@ impl Renderer {
         };
         if let Some((cached, texture)) = &self.cached {
             if cached.same_view(&key) {
-                painter.image(
-                    texture.id(),
-                    rect,
-                    Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1., 1.)),
-                    Color32::WHITE,
-                );
+                if let Some(f) = chart.flight {
+                    f.image(painter, texture.id(), rect);
+                } else {
+                    painter.image(
+                        texture.id(),
+                        rect,
+                        Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1., 1.)),
+                        Color32::WHITE,
+                    );
+                }
                 if cached.site[2] == key.site[2] {
                     return;
                 }

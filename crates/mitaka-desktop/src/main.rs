@@ -328,7 +328,7 @@ impl App {
                     (self.latitude, self.longitude)
                 };
                 if !matches!(body, 3 | 4) {
-                    if let Err(e) = self.nonterrain_mode(ascend, 3., false) {
+                    if let Err(e) = self.nonterrain_mode(ascend, self.motion.mode_duration, false) {
                         self.error = Some(e.to_string());
                     }
                     return;
@@ -343,14 +343,15 @@ impl App {
                         self.terrain_amplification,
                     )?;
                     self.solar.prepare(&data.ephemeris, self.jd)?;
-                    self.solar.begin_surface_flight(
+                    let site = camera_control::session::Site::ground(
                         body,
                         lat,
                         lon,
                         ground.landing_height_m(solar::RADII_KM[body]),
-                        self.jd,
-                        ascend,
-                    )?;
+                        self.horizon,
+                    );
+                    self.solar.begin_surface_flight(site, self.jd, ascend)?;
+                    self.solar.flight_duration(self.motion.mode_duration);
                     self.motion.site = None;
                     self.surface = Some(ground);
                     self.view = View::Solar;
@@ -406,7 +407,10 @@ impl App {
             }
             Command::Info if self.view == View::Solar => self.solar.show_controls = true,
             Command::Info => self.info = true,
-            Command::Reset if self.view == View::Solar => self.solar = Default::default(),
+            Command::Reset if self.view == View::Solar => {
+                self.motion.reset_solar_camera(&mut self.solar);
+                self.objects.stop_tracking();
+            }
             Command::Reset if self.view == View::Surface => self.view = View::Solar,
             Command::Reset => *self.camera() = Camera::default(),
         }
@@ -687,6 +691,7 @@ impl App {
                 galaxies,
                 surface_site: self.motion.site.as_mut(),
                 observer: [self.latitude, self.longitude],
+                horizon_camera: self.horizon,
                 star_display: solar::sky::Display {
                     magnitude: self.options.magnitude,
                     lines: self.options.lines,
@@ -719,6 +724,7 @@ impl App {
             }
             self.object_in_solar(ui);
             self.script_marker(ui);
+            self.draw_horizon_flight(ui);
             return;
         }
         if self.view == View::Surface {
@@ -736,10 +742,9 @@ impl App {
             return;
         }
         let view = self.view;
-        let camera = self.camera();
         if response.dragged() {
             let delta = response.drag_delta();
-            camera.pan(
+            self.camera().pan(
                 view,
                 f64::from(delta.x / rect.width()),
                 f64::from(delta.y / rect.height()),
@@ -749,8 +754,7 @@ impl App {
             let factor = ui
                 .input(|i| (i.smooth_scroll_delta.y * 0.008).clamp(-2., 2.).exp() * i.zoom_delta());
             if (factor - 1.).abs() > 1e-6 {
-                camera.zoom_at(
-                    view,
+                self.zoom_chart_at(
                     factor.into(),
                     [
                         f64::from((mouse.x - rect.left()) / rect.width()),
@@ -759,11 +763,12 @@ impl App {
                 );
             }
         }
-        let camera = *camera;
+        let camera = *self.camera();
         let Ok(frame) = ObservationFrame::new(self.latitude, self.longitude, self.jd) else {
             return;
         };
         let chart = Chart {
+            flight: None,
             view,
             camera,
             frame: &frame,
@@ -829,6 +834,51 @@ impl App {
             ui.ctx().request_repaint();
         }
     }
+    fn draw_horizon_flight(&mut self, ui: &egui::Ui) {
+        let Some(f) = self.solar.horizon_overlay else {
+            return;
+        };
+        let Some(site) = self.solar.flight_site else {
+            return;
+        };
+        let Some(data) = &self.data else { return };
+        let Ok(frame) = ObservationFrame::new(site.lat, site.lon, self.jd) else {
+            return;
+        };
+        let chart = Chart {
+            view: View::Horizon,
+            rect: f.rect,
+            camera: f.camera,
+            frame: &frame,
+            flight: Some(f),
+        };
+        let mut painter = ui.painter().with_clip_rect(f.rect);
+        painter.multiply_opacity((1. - f.blend) as f32);
+        painter.rect_filled(f.rect, 0., Color32::from_rgb(6, 11, 18));
+        self.background_render.paint(
+            &painter,
+            &chart,
+            &data.layers.backgrounds,
+            self.options.layers.milky_way,
+            [site.lat, site.lon, self.jd],
+        );
+        chart.paint(&painter, data, &self.options, self.selected, None);
+        if let Ok(bodies) = planet_layers::positions(&data.ephemeris, self.jd) {
+            self.solar.layers.paint(&chart, &painter, &bodies, None);
+        }
+        self.object_on_sky(&chart, &painter);
+        if self.options.layers.landscape {
+            self.landscape_render.prepare(
+                &painter,
+                &data.layers.landscapes,
+                &data.layers.places,
+                &self.options.layers.observer,
+                (f.camera, f.camera.roll),
+                f.rect,
+            );
+            self.landscape_render.paint_flight(&painter, f);
+        }
+    }
 }
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
@@ -845,7 +895,17 @@ impl eframe::App for App {
         self.media.frame(ctx);
         if self.view == View::Solar {
             if let Some(body) = self.solar.landed.take() {
+                let arrival = self.solar.flight_site;
                 self.solar.stop();
+                if let Some(site) = arrival {
+                    self.horizon.longitude = site.heading;
+                    self.horizon.latitude = site.elevation;
+                    self.horizon.roll = site.roll;
+                    if body == 3 {
+                        self.latitude = site.lat;
+                        self.longitude = site.lon;
+                    }
+                }
                 if body == 3 {
                     self.view = View::Horizon;
                 } else if let Some(ground) = self.surface.as_ref().filter(|g| g.body == body) {

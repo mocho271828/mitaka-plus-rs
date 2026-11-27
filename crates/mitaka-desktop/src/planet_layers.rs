@@ -171,6 +171,7 @@ mod tests {
             camera: Camera::default(),
             frame: &frame,
             rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1080., 700.)),
+            flight: None,
         };
         // J2000のHIP 92111と太陽は全天図で約2.6pxしか離れていない。
         let star = chart.point([281.5858, -22.3922]);
