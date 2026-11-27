@@ -59,7 +59,7 @@ impl Scripts {
             Err(e) => self.append(&format!("Lua helper を起動できません: {e}")),
         }
     }
-    fn cancel(&mut self) {
+    pub(super) fn cancel(&mut self) {
         if self.job.take().is_some() {
             self.append("スクリプトを停止しました");
         }

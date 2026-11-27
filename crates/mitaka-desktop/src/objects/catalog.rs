@@ -57,12 +57,14 @@ enum Store {
     Sdss(&'static str, Vec<SdssRecord>),
 }
 pub(super) struct Catalog {
+    pub(super) sources: std::collections::BTreeMap<usize, super::selections::Source>,
     rows: Vec<Entry>,
     store: Store,
     pub warnings: Vec<String>,
 }
 impl Catalog {
     pub(super) fn load(kind: Kind, root: &Path) -> io::Result<Self> {
+        let mut sources = std::collections::BTreeMap::new();
         let mut rows = Vec::new();
         let mut warnings = Vec::new();
         let store = match kind {
@@ -127,6 +129,9 @@ impl Catalog {
                     if let Some(e) = &src.error {
                         warnings.push(format!("{} · {e}", src.key));
                     }
+                    if !src.records.is_empty() && src.error.is_none() {
+                        sources.insert(s, super::selections::Source::new(&src.key, &src.raw));
+                    }
                     for (i, r) in src.records.iter().enumerate() {
                         let mut parts = Vec::new();
                         if let Some(id) = r.number {
@@ -171,6 +176,9 @@ impl Catalog {
                         .map(|d| format!("{} 行 {} · {}", d.source, d.line, d.message)),
                 );
                 for (s, src) in dataset.sources.iter().enumerate() {
+                    if src.read_complete && src.records.iter().any(|r| r.block == "Satellite") {
+                        sources.insert(s, super::selections::Source::new(&src.key, &src.raw));
+                    }
                     for r in src.records.iter().filter(|r| r.block == "Satellite") {
                         let parent = r
                             .parent
@@ -204,10 +212,18 @@ impl Catalog {
             }
         };
         Ok(Self {
+            sources,
             rows,
             store,
             warnings,
         })
+    }
+    pub(super) fn identity(&self, i: usize) -> Option<(&super::selections::Source, usize)> {
+        let (s, ord) = match self.rows.get(i)?.target {
+            Key::Small(s, ord) | Key::Satellite(s, ord) => (s, ord),
+            _ => return None,
+        };
+        Some((self.sources.get(&s)?, ord))
     }
     pub(super) fn len(&self) -> usize {
         if let Store::Sdss(_, rows) = &self.store {
@@ -354,6 +370,7 @@ mod tests {
     fn sdss_identifiers_keep_source_ordinals_and_never_wrap() {
         let c = Catalog {
             rows: vec![],
+            sources: Default::default(),
             store: Store::Sdss(
                 "SDSS_GAL.dat",
                 vec![SdssRecord {

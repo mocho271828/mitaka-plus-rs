@@ -9,6 +9,8 @@ pub enum Command {
     ScriptPanel,
     LocalHtml,
     Open,
+    RememberState,
+    RecallState,
     LoadState,
     SaveState,
     Sky,
@@ -29,6 +31,8 @@ pub enum Command {
 const FILE: &[(Command, &str)] = &[
     (Command::Media, "画像・音声・動画を開く…"),
     (Command::Open, "データを開く…"),
+    (Command::RememberState, "現在の表示状態を記憶"),
+    (Command::RecallState, "記憶した表示状態を呼び出す"),
     (Command::LoadState, "表示状態を開く…"),
     (Command::SaveState, "表示状態を保存…"),
     (Command::Export, "画像を書き出す…"),
