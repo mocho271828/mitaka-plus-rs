@@ -30,7 +30,31 @@ struct Clock {
     days_per_second: f64,
 }
 
+struct TimeAnimation {
+    start: Instant,
+    from: f64,
+    to: f64,
+    seconds: f64,
+    smooth: bool,
+}
+impl TimeAnimation {
+    fn sample(&self, now: Instant) -> (f64, bool) {
+        let elapsed = now.saturating_duration_since(self.start).as_secs_f64();
+        if self.seconds <= 0. || elapsed >= self.seconds {
+            return (self.to, true);
+        }
+        let t = elapsed / self.seconds;
+        let weight = if self.smooth {
+            (1. - (std::f64::consts::PI * t).cos()) * 0.5
+        } else {
+            t
+        };
+        (self.from + weight * (self.to - self.from), false)
+    }
+}
+
 pub(super) struct Playback {
+    animation: Option<TimeAnimation>,
     clock: Option<Clock>,
     pub realtime: bool,
     pub show: bool,
@@ -47,6 +71,7 @@ impl Default for Playback {
     fn default() -> Self {
         Self {
             clock: None,
+            animation: None,
             realtime: false,
             show: true,
             rate: 3600.,
@@ -63,10 +88,12 @@ impl Default for Playback {
 impl Playback {
     pub(super) fn stop(&mut self) {
         self.clock = None;
+        self.animation = None;
         self.realtime = false;
         self.plus_speed = 0;
     }
     fn start(&mut self, jd: f64, rate: f64) {
+        self.animation = None;
         self.realtime = false;
         let now = Instant::now();
         self.clock = (rate != 0.).then_some(Clock {
@@ -90,7 +117,7 @@ impl Playback {
         }
         self.plus_step = step;
         self.plus_value = value;
-        // 通常再生・時計追従の間もPlusのステップを設定できる。
+        // 通常再生・時計追従・日時補間の間もPlusのステップを設定できる。
         if self.plus_speed != 0 {
             self.start(jd, rate);
         }
@@ -159,16 +186,47 @@ impl App {
         )
         .map_err(str::to_owned)
     }
+    pub(super) fn animate_time(&mut self, msg: &serde_json::Value) -> Result<(), String> {
+        let target = msg["target"].as_f64().ok_or("無効な日時です")?;
+        let seconds = msg["duration"].as_f64().ok_or("補間時間が必要です")?;
+        let smooth = msg["smooth"].as_bool().ok_or("補間曲線が必要です")?;
+        let numeric = msg["numeric"].as_bool().ok_or("日時の形式が必要です")?;
+        mitaka_core::astronomy::gregorian_date_time(target).map_err(|e| e.to_string())?;
+        if let Some(data) = &self.data {
+            data.validate_date(target).map_err(|e| e.to_string())?;
+        }
+        if numeric && target == self.jd {
+            return Ok(());
+        }
+        self.playback.stop();
+        if seconds <= 0. {
+            return self.apply_date(target);
+        }
+        self.playback.animation = Some(TimeAnimation {
+            start: Instant::now(),
+            from: self.jd,
+            to: target,
+            seconds,
+            smooth,
+        });
+        Ok(())
+    }
     pub(super) fn clock_frame(&mut self, ctx: &egui::Context) {
         let p = &mut self.playback;
-        if !p.realtime && p.clock.is_none() {
+        if !p.realtime && p.clock.is_none() && p.animation.is_none() {
             return;
         }
         let bounds = self
             .data
             .as_ref()
             .map_or([37.5, 5373484.49], |d| d.date_range);
-        let jd = if p.realtime {
+        let jd = if let Some(anim) = &p.animation {
+            let (jd, done) = anim.sample(Instant::now());
+            if done {
+                p.animation = None;
+            }
+            Some(jd)
+        } else if p.realtime {
             Some(UNIX_EPOCH_JD + Utc::now().timestamp_millis() as f64 / 86400000.)
         } else {
             p.sample(Instant::now(), bounds)
@@ -324,6 +382,28 @@ impl App {
                         .suffix("分"),
                 );
             });
+            let zone = &mut self.session.0["plus_time_zone"];
+            let mut explicit = !zone.is_null();
+            if ui.checkbox(&mut explicit, "Lua の地方時差を指定").changed() {
+                *zone = if explicit {
+                    serde_json::json!({"seconds_west_utc": -self.playback.offset*60})
+                } else {
+                    serde_json::Value::Null
+                };
+            }
+            if let Some(mut west) = zone["seconds_west_utc"].as_i64() {
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut west)
+                            .range(i32::MIN as i64..=i32::MAX as i64)
+                            .prefix("UTC より西へ ")
+                            .suffix(" 秒"),
+                    )
+                    .changed()
+                {
+                    zone["seconds_west_utc"] = west.into();
+                }
+            }
             let offset = f64::from(self.playback.offset) / 1440.;
             let Some(local) = utc_date(self.jd + offset) else {
                 return;
@@ -391,12 +471,35 @@ mod tests {
         p.set_plus_step(100., 4, DAYS[4]).unwrap();
         assert!(p.realtime && p.clock.is_none());
         p.set_tracking(false);
+        p.animation = Some(TimeAnimation {
+            start,
+            from: 100.,
+            to: 110.,
+            seconds: 5.,
+            smooth: false,
+        });
+        p.set_plus_step(100., 5, DAYS[5]).unwrap();
+        assert!(p.animation.is_some());
 
         p.plus_speed = 2;
         p.set_plus_step(100., 11, -1.).unwrap();
         assert_eq!(p.clock.as_ref().unwrap().days_per_second, -2.);
         assert!(p.set_plus_step(100., 11, f64::MAX).is_err());
         assert_eq!(p.plus_value, -1.);
+    }
+    #[test]
+    fn animation_preserves_endpoints_and_half_cosine() {
+        let start = Instant::now();
+        let a = TimeAnimation {
+            start,
+            from: 100.,
+            to: 104.,
+            seconds: 2.,
+            smooth: true,
+        };
+        assert_eq!(a.sample(start), (100., false));
+        assert!((a.sample(start + Duration::from_millis(500)).0 - 100.5857864376).abs() < 1e-8);
+        assert_eq!(a.sample(start + Duration::from_secs(2)), (104., true));
     }
     #[test]
     fn clamps_gui_month_and_rolls_plus_month() {

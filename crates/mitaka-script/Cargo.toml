@@ -5,6 +5,7 @@ edition = "2024"
 license = "MIT"
 
 [dependencies]
+mitaka-core = { path = "../mitaka-core" }
 command-group = "5"
 interprocess = "2"
 mlua = { version = "0.12.2", features = ["lua54"] }
