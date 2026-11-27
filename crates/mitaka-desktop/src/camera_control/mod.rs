@@ -1,4 +1,6 @@
 mod galaxy_targets;
+mod journey;
+mod journey_panel;
 mod navigation;
 mod orientation;
 mod places;
@@ -89,6 +91,7 @@ pub(crate) struct State {
     target: Option<target::Tracking>,
     place: Option<places::Move>,
     place_name: Option<String>,
+    journey: journey_panel::Panel,
     physical_flight: Option<navigation::Flight>,
     free_physical: bool,
     pub(crate) site: Option<session::Site>,
@@ -110,6 +113,7 @@ impl Default for State {
             target: None,
             place: None,
             place_name: None,
+            journey: Default::default(),
             physical_flight: None,
             free_physical: false,
             site: None,
@@ -223,6 +227,9 @@ impl App {
     }
     pub(crate) fn camera_frame(&mut self, ctx: &egui::Context) {
         let now = Instant::now();
+        if let Err(e) = self.tick_journey(now) {
+            self.error = Some(e.to_string());
+        }
         if let Err(e) = self.tick_place(now) {
             self.error = Some(e.to_string());
         }
@@ -306,6 +313,7 @@ impl App {
         }
         let m = &self.motion;
         if m.place.is_some()
+            || m.journey.flight.is_some()
             || m.physical_flight.is_some()
             || m.az.is_some()
             || m.alt.is_some()

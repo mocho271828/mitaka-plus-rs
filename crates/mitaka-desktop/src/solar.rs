@@ -362,6 +362,12 @@ impl Solar {
             f.duration = seconds
         }
     }
+    pub(crate) fn body_centers(&self) -> io::Result<&[Point; 11]> {
+        self.scene
+            .as_ref()
+            .map(|s| &s.bodies)
+            .ok_or_else(|| io::Error::other("太陽系の位置がありません"))
+    }
     pub(crate) fn body_point(&self, id: usize) -> Option<[f64; 3]> {
         self.scene.as_ref()?.bodies.get(id).copied()
     }

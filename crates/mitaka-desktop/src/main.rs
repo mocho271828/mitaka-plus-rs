@@ -248,6 +248,17 @@ impl App {
         }
     }
     fn execute(&mut self, command: Command, ctx: &egui::Context) {
+        if matches!(
+            command,
+            Command::Reset
+                | Command::Land
+                | Command::Sky
+                | Command::Horizon
+                | Command::SolarControls
+                | Command::Surface
+        ) {
+            self.interrupt_journey();
+        }
         match command {
             Command::Open => self.open(),
             Command::Media => self.media.choose(ctx),
@@ -346,6 +357,7 @@ impl App {
                 }
             }
             Command::Solar => self.view = View::Solar,
+            Command::Journey => self.open_journey(),
             Command::CameraControls => self.motion.controls = true,
             Command::SolarControls => {
                 self.view = View::Solar;
@@ -485,6 +497,7 @@ impl App {
             });
         self.projector.settings(ctx);
         self.camera_controls(ctx);
+        self.journey_panel(ctx);
         self.object_panels(ctx);
         self.solar.panel(ctx);
         if let Some(g) = &mut self.galaxies {
@@ -657,6 +670,13 @@ impl App {
             return;
         }
         if self.view == View::Solar {
+            if ui.rect_contains_pointer(self.canvas_rect)
+                && ui.input(|i| {
+                    i.pointer.any_pressed() || i.smooth_scroll_delta.y != 0. || i.zoom_delta() != 1.
+                })
+            {
+                self.interrupt_journey();
+            }
             let data = self.data.as_ref().unwrap();
             let view = solar::ViewSettings {
                 data,
