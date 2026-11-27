@@ -60,6 +60,22 @@ impl Scripts {
             Err(e) => self.append(&format!("Lua helper を起動できません: {e}")),
         }
     }
+    pub(super) fn start_switch_probe(&mut self, ctx: &egui::Context) -> io::Result<()> {
+        let dir = run::scratch()?;
+        let path = local_source(dir.path(), "Time.JD = Time.JD + 1")?;
+        let job = Run::start(path, false, dir.path().to_owned(), dir, ctx)?;
+        // 実ヘルパーがJDを取得できた時点で、次の書き換え要求はUIからの応答を待つ。
+        match job.events.recv_timeout(Duration::from_secs(10)) {
+            Ok(Event::Request(msg, reply)) if msg["op"] == "snapshot" => {
+                reply
+                    .send(json!({"ok": true, "jd": 2451545.0}))
+                    .map_err(io::Error::other)?;
+            }
+            _ => return Err(io::Error::other("検証用Luaの日時読取要求が到着しません")),
+        }
+        self.job = Some(job);
+        Ok(())
+    }
     pub(super) fn cancel(&mut self) {
         if self.job.take().is_some() {
             self.append("スクリプトを停止しました");

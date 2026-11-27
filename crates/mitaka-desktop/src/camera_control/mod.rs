@@ -124,6 +124,10 @@ impl State {
     pub(crate) fn reset_solar_camera(&mut self, solar: &mut crate::solar::Solar) {
         self.site = None;
         self.free_physical = false;
+        self.stop_motion(solar);
+        solar.camera = Default::default();
+    }
+    pub(crate) fn stop_motion(&mut self, solar: &mut crate::solar::Solar) {
         self.physical_flight = None;
         self.journey.flight = None;
         self.place = None;
@@ -135,7 +139,6 @@ impl State {
         self.zoom = None;
         self.fov = None;
         solar.stop();
-        solar.camera = Default::default();
     }
 }
 fn tick(slot: &mut Option<Scalar>, now: Instant) -> Option<f64> {

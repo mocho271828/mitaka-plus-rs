@@ -128,6 +128,7 @@ impl Smoke {
             .ok_or_else(|| io::Error::other("データをロードできません"))?;
         match scene {
             Scene::Sky => {
+                super::data_loading::check_switch(app, ctx)?;
                 check_date_limits(app)?;
                 app.view = View::Sky;
                 app.projector.open = true;

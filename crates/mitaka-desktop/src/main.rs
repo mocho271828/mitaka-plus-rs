@@ -3,6 +3,7 @@ mod capture;
 mod catalog;
 mod chart;
 mod commands;
+mod data_loading;
 mod deep_sky;
 mod fonts;
 mod fullscreen;
@@ -118,6 +119,7 @@ struct App {
     playback: playback::Playback,
     session: session::Session,
     data: Option<SkyData>,
+    pending_data: Option<data_loading::Request>,
     solar: solar::Solar,
     surface: Option<surface::Surface>,
     galaxies: Option<galaxies::Browser>,
@@ -165,6 +167,7 @@ impl App {
             quality: Default::default(),
             terrain_amplification: Default::default(),
             data: initial,
+            pending_data: None,
             motion: Default::default(),
             background_render: Default::default(),
             landscape_render: Default::default(),
@@ -251,39 +254,10 @@ impl App {
             Err(e) => self.error = Some(e),
         }
     }
-    fn open(&mut self) {
-        if let Some(root) = rfd::FileDialog::new()
-            .set_title("hip.dat と cf96.dat のあるフォルダを開く")
-            .pick_folder()
-        {
-            match SkyData::open(&root) {
-                Ok(data) => {
-                    let jd = data.initial_date(self.jd);
-                    self.options.layers.observer.clear();
-                    self.options.layers.selected = None;
-                    self.options.layers.exceptions.clear();
-                    self.media.reset(&data.root);
-                    self.data = Some(data);
-                    if jd != self.jd {
-                        self.set_date(jd);
-                    }
-                    self.motion = Default::default();
-                    self.objects = Default::default();
-                    self.solar = Default::default();
-                    self.surface = None;
-                    self.galaxies = None;
-                    if matches!(self.view, View::Surface) {
-                        self.view = View::Sky;
-                    }
-                    self.selected = None;
-                    self.error = None;
-                    self.search_message.clear();
-                }
-                Err(err) => self.error = Some(format!("{}\n{err}", root.display())),
-            }
-        }
-    }
     fn execute(&mut self, command: Command, ctx: &egui::Context) {
+        if self.pending_data.is_some() && !matches!(command, Command::Open | Command::Quit) {
+            return;
+        }
         if matches!(
             command,
             Command::Reset
@@ -308,7 +282,7 @@ impl App {
                     self.zoom_chart_at(factor, [0.5, 0.5]);
                 }
             }
-            Command::Open => self.open(),
+            Command::Open => self.open(ctx),
             Command::Media => self.media.choose(ctx),
             Command::MediaList => self.media.browser = true,
             Command::Projector => {
@@ -714,7 +688,7 @@ impl App {
         if self.data.is_none() {
             ui.centered_and_justified(|ui| {
                 if ui.button("天文データを開く…").clicked() {
-                    self.open();
+                    self.open(ui.ctx());
                 }
             });
             return;
@@ -935,6 +909,26 @@ impl eframe::App for App {
         if let Err(error) = self.fullscreen.poll(ctx) {
             self.error = Some(error.into());
         }
+        self.poll_data();
+        for command in self.menus.poll(ctx) {
+            self.execute(command, ctx);
+        }
+        if !ctx.wants_keyboard_input() {
+            let chart = matches!(self.view, View::Sky | View::Horizon);
+            for command in shortcuts::commands(ctx, chart) {
+                self.execute(command, ctx);
+            }
+        }
+        if self.pending_data.is_some() {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.spinner();
+                ui.label("天文データを読み込んでいます");
+                if ui.button("別のデータを開く…").clicked() {
+                    self.open(ctx);
+                }
+            });
+            return;
+        }
         self.camera_frame(ctx);
         self.clock_frame(ctx);
         if self
@@ -968,15 +962,6 @@ impl eframe::App for App {
                     ));
                     self.view = View::Solar;
                 }
-            }
-        }
-        for command in self.menus.poll(ctx) {
-            self.execute(command, ctx);
-        }
-        if !ctx.wants_keyboard_input() {
-            let chart = matches!(self.view, View::Sky | View::Horizon);
-            for command in shortcuts::commands(ctx, chart) {
-                self.execute(command, ctx);
             }
         }
         let canvas_layer = egui::CentralPanel::default()
@@ -1026,7 +1011,12 @@ fn run() -> Result<(), AppError> {
             let path = PathBuf::from("resources/data");
             path.join("hip.dat").is_file().then_some(path)
         });
-    let (data, error) = match root {
+    let (inspection_root, startup_root) = if args.inspect || args.smoke {
+        (root, None)
+    } else {
+        (None, root)
+    };
+    let (data, error) = match inspection_root {
         Some(path) => match SkyData::open(&path) {
             Ok(data) => (Some(data), None),
             Err(error) => (None, Some(format!("{}: {error}", path.display()))),
@@ -1072,7 +1062,13 @@ fn run() -> Result<(), AppError> {
     eframe::run_native(
         "Mitaka Plus",
         options,
-        Box::new(move |cc| Ok(Box::new(App::new(cc, data, error, smoke)?))),
+        Box::new(move |cc| {
+            let mut app = App::new(cc, data, error, smoke)?;
+            if let Some(root) = startup_root {
+                app.load_data(root, &cc.egui_ctx);
+            }
+            Ok(Box::new(app))
+        }),
     )
     .map_err(|e| e.to_string())?;
     if let Some(rx) = rx {
