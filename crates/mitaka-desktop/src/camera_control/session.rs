@@ -138,10 +138,9 @@ impl App {
                 solar["physical_space"] = json!(true);
             }
         }
-        if let Some(anchor) = v["solar_camera"].get("precise_target") {
-            if v["solar_camera"]["target"] == solar["target"] {
-                solar["precise_target"] = anchor.clone();
-            }
+        if let Some(target) = c.precise() {
+            solar["precise_target"] =
+                json!({"anchor_pc":target.anchor_pc,"offset_au":target.offset_au});
         }
         v["solar_camera"] = solar;
         Ok(())

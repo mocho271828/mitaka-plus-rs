@@ -451,6 +451,14 @@ fn encoder_round_trips_through_native_decoder() {
     let path = directory.path().join("session.json");
     let mut current = Session::default();
     current.0["julian_date"] = Value::from(2454567.125);
+    current.0["mode"] = Value::from(1);
+    let target = crate::solar::precise::Target {
+        anchor_pc: [1e9, -2e9, 3e9],
+        offset_au: [0.02, -0.006, 0.07],
+    };
+    current.0["solar_camera"]["target"] = serde_json::json!(target.approximate());
+    current.0["solar_camera"]["precise_target"] =
+        serde_json::json!({"anchor_pc":target.anchor_pc,"offset_au":target.offset_au});
     current.write(&path).unwrap();
     let native = Command::new(std::env::var_os("MITAKA_REFERENCE_SESSION").unwrap())
         .arg("decode")
@@ -460,4 +468,13 @@ fn encoder_round_trips_through_native_decoder() {
     assert!(native.status.success());
     let roundtrip = Session::decode(&native.stdout).unwrap();
     assert_eq!(roundtrip.0["julian_date"], 2454567.125);
+    for (path, expected) in [
+        ("/solar_camera/target", target.approximate()),
+        ("/solar_camera/precise_target/anchor_pc", target.anchor_pc),
+        ("/solar_camera/precise_target/offset_au", target.offset_au),
+    ] {
+        let raw = roundtrip.0.pointer(path).unwrap();
+        let actual: [f64; 3] = std::array::from_fn(|i| raw[i].as_f64().unwrap());
+        assert_eq!(actual, expected);
+    }
 }

@@ -1,5 +1,6 @@
 //! CF96 の太陽中心J2000赤道座標を黄道座標へ変換し、AUのまま透視投影する。
 mod eclipse;
+pub(crate) mod precise;
 mod scales;
 pub(crate) mod sphere;
 use eframe::egui::{self, Color32, Pos2, Rect, Stroke};
@@ -114,8 +115,9 @@ impl Scene {
         })
     }
 }
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SolarCamera {
+    pub(crate) precise_target: Option<precise::Target>,
     pub(crate) fov: f64,
     pub(crate) frame: Option<[[f64; 3]; 3]>,
     pub(crate) frame_is_orbit: bool,
@@ -128,6 +130,7 @@ pub struct SolarCamera {
 impl Default for SolarCamera {
     fn default() -> Self {
         Self {
+            precise_target: None,
             target: [0.; 3],
             distance: 100.,
             fov: 45.,
@@ -157,9 +160,9 @@ impl SolarCamera {
     }
     pub(crate) fn project(self, pos: Point, rect: Rect) -> Option<(Pos2, f64)> {
         let [right, up, out] = self.basis();
-        let rel = minus(pos, self.target);
+        let rel = self.relative_au(pos);
         let depth = self.distance - dot(rel, out);
-        if depth <= self.distance * 0.0001 {
+        if depth < self.distance * 0.0001 {
             return None;
         }
         let factor = f64::from(rect.height()) / (2. * (self.fov * 0.5).to_radians().tan() * depth);
@@ -221,6 +224,7 @@ pub(crate) struct ViewSettings<'a> {
     pub layers: &'a crate::layers::LayerOptions,
     pub surface_site: Option<&'a mut crate::camera_control::session::Site>,
     pub observer: [f64; 2],
+    pub galaxies: &'a mut crate::galaxies::Browser,
 }
 pub struct Solar {
     scene: Option<Scene>,
@@ -295,6 +299,7 @@ impl Solar {
         let center = scene.bodies[body];
         if ascend {
             self.camera = SolarCamera {
+                precise_target: None,
                 target: center,
                 fov: self.camera.fov,
                 frame: None,
@@ -461,6 +466,7 @@ impl Solar {
             layers,
             surface_site,
             observer,
+            galaxies,
         } = settings;
         let system = &data.ephemeris;
         let root = &data.root;
@@ -506,26 +512,20 @@ impl Solar {
                 &mut self.camera,
             )?;
         } else if response.dragged() {
-            self.camera.frame = None;
-            self.camera.frame_is_orbit = false;
             self.stop();
             let d = response.drag_delta();
             if modifiers.shift || response.dragged_by(egui::PointerButton::Secondary) {
                 let [r, u, _] = self.camera.basis();
                 let factor = 2. * self.camera.distance * (self.camera.fov * 0.5).to_radians().tan()
                     / f64::from(rect.height().max(1.));
-                self.camera.target = plus(
-                    self.camera.target,
-                    scale(
-                        minus(scale(u, f64::from(d.y)), scale(r, f64::from(d.x))),
-                        factor,
-                    ),
-                );
+                self.camera.pan_au(scale(
+                    minus(scale(u, f64::from(d.y)), scale(r, f64::from(d.x))),
+                    factor,
+                ));
             } else if modifiers.alt {
-                self.camera.roll = (self.camera.roll + f64::from(d.x) * 0.35) % 360.;
+                self.camera.roll_by(f64::from(d.x) * 0.35);
             } else {
-                self.camera.yaw = (self.camera.yaw - f64::from(d.x) * 0.35) % 360.;
-                self.camera.pitch = (self.camera.pitch + f64::from(d.y) * 0.35).clamp(-89., 89.);
+                self.camera.orbit(f64::from(d.x), f64::from(d.y));
             }
         }
         if response.hovered() {
@@ -537,8 +537,13 @@ impl Solar {
                 if on_surface {
                     self.camera.fov = (self.camera.fov * f64::from(factor)).clamp(0.001, 90.);
                 } else {
+                    let min = if self.camera.frame.is_some() && !self.camera.frame_is_orbit {
+                        1e-12
+                    } else {
+                        0.000005
+                    };
                     self.camera.distance = (self.camera.distance * f64::from(factor))
-                        .clamp(5e-6, 648000. / std::f64::consts::PI * 1e40);
+                        .clamp(min, 1e40 * precise::AU_PER_PC);
                 }
             }
         }
@@ -565,6 +570,7 @@ impl Solar {
         } else if self.follow {
             self.camera.target = dest;
         }
+        galaxies.paint(&painter, &response, self.camera, &layers.deep_sky, picking);
         scales::paint(&painter, rect, self.camera, layers, observer, jd);
         if self.orbits {
             let stroke = Stroke::new(0.7_f32, Color32::from_rgb(59, 77, 100));

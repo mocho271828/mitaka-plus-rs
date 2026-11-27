@@ -59,8 +59,6 @@ impl App {
             View::Sky => 0,
             View::Horizon => 2,
             View::Solar | View::Surface => 1,
-            View::Galaxy =>
-                return Err(io::Error::other("この表示モードの保存には対応していません")),
         });
         v["sky_viewport"] = json!({"center_ra_deg":self.sky.longitude,"center_dec_deg":self.sky.latitude,"zoom":self.sky.zoom});
         v["horizon_viewport"] = json!({"center_azimuth_deg":self.horizon.longitude,"center_altitude_deg":self.horizon.latitude,"zoom":self.horizon.zoom.clamp(1.,180.),"fov_deg":self.horizon_fov(),"roll_deg":self.horizon.roll});
@@ -125,15 +123,13 @@ impl App {
         let restored_site = crate::camera_control::session::saved_site(v)?;
         let selections = crate::objects::selections::Selections::load(&data.root, v)?;
         let camera = &v["solar_camera"];
-        let mut target: [f64; 3] = std::array::from_fn(|i| camera["target"][i].as_f64().unwrap());
-        if let Some(p) = camera.get("precise_target") {
-            target = std::array::from_fn(|i| {
-                p["anchor_pc"][i].as_f64().unwrap().mul_add(
-                    648000. / std::f64::consts::PI,
-                    p["offset_au"][i].as_f64().unwrap(),
-                )
+        let target = std::array::from_fn(|i| camera["target"][i].as_f64().unwrap());
+        let precise = camera
+            .get("precise_target")
+            .map(|p| crate::solar::precise::Target {
+                anchor_pc: std::array::from_fn(|i| p["anchor_pc"][i].as_f64().unwrap()),
+                offset_au: std::array::from_fn(|i| p["offset_au"][i].as_f64().unwrap()),
             });
-        }
         let layers = crate::layers::LayerOptions::restore(v, data)?;
         let terrain_amplification = state.terrain_amplification()?;
         // 検証と出典照合が全て成功してから、補間を停止して一括適用する。
@@ -147,6 +143,10 @@ impl App {
         self.set_date(jd);
         self.camera_extras_after_restore(camera, restored_site);
         self.solar.camera.target = target;
+        self.solar.camera.precise_target = None;
+        if let Some(p) = precise {
+            self.solar.camera.set_anchor(p);
+        }
         self.solar.camera.distance = num(camera, "distance_au");
         self.solar.camera.yaw = num(camera, "yaw_deg");
         self.solar.camera.pitch = num(camera, "pitch_deg");

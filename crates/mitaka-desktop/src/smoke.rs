@@ -53,6 +53,8 @@ enum Scene {
     Earth,
     Mars,
     Galaxy,
+    Sdss,
+    SolarReturn,
     ObjectBrowser,
     SpacecraftPaths,
     CameraLua,
@@ -70,6 +72,8 @@ impl Scene {
             Self::Earth => "earth",
             Self::Mars => "mars",
             Self::Galaxy => "galaxy",
+            Self::Sdss => "sdss-3d",
+            Self::SolarReturn => "solar-return",
             Self::ObjectBrowser => "object-browser",
             Self::SpacecraftPaths => "spacecraft-paths",
             Self::CameraLua => "camera-lua",
@@ -101,6 +105,8 @@ impl Smoke {
                     Scene::Earth,
                     Scene::Mars,
                     Scene::Galaxy,
+                    Scene::Sdss,
+                    Scene::SolarReturn,
                     Scene::ObjectBrowser,
                     Scene::SpacecraftPaths,
                     Scene::CameraLua,
@@ -225,7 +231,39 @@ impl Smoke {
                     return Ok(false);
                 }
                 app.galaxies = Some(galaxies::Browser::new(data.root.clone(), ctx));
-                app.view = View::Galaxy;
+                app.execute(crate::commands::Command::Galaxy, ctx);
+                app.galaxies.as_mut().unwrap().controls = false;
+            }
+            Scene::Sdss => {
+                if !data.root.join("SDSS_GAL.dat").is_file() {
+                    return Ok(false);
+                }
+                let browser = app
+                    .galaxies
+                    .get_or_insert_with(|| galaxies::Browser::new(data.root.clone(), ctx));
+                browser.select_sdss(&mut app.options.layers.deep_sky);
+                app.solar.camera.set_target_pc([0.; 3]);
+                app.solar.camera.distance = 1.8e9 * crate::solar::precise::AU_PER_PC;
+                app.view = View::Solar;
+            }
+            Scene::SolarReturn => {
+                let dir = tempfile::tempdir()?;
+                let path = dir.path().join("galaxy-v9.json");
+                app.solar.camera.pan_au([0.0003, -0.0002, 0.0001]);
+                let before = app.solar.camera;
+                app.save_session(&path)?;
+                app.restore_session(&path)?;
+                if app.view != View::Solar || app.solar.camera != before {
+                    return Err(io::Error::other(format!(
+                        "銀河視点のv9往復でカメラが変わりました {before:?} → {:?}",
+                        app.solar.camera
+                    )));
+                }
+                app.execute(crate::commands::Command::Reset, ctx);
+                app.options.layers.deep_sky = Default::default();
+                if app.solar.camera.target != [0.; 3] || app.solar.camera.precise().is_some() {
+                    return Err(io::Error::other("太陽系の初期視点に戻れません"));
+                }
             }
         }
         Ok(true)
@@ -264,7 +302,7 @@ impl Smoke {
                 app.check_camera_session()?;
             }
         }
-        if scene == Scene::Galaxy {
+        if matches!(scene, Scene::Galaxy | Scene::Sdss) {
             let Some(g) = &app.galaxies else {
                 return Ok(false);
             };

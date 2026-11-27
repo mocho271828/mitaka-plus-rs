@@ -1,439 +1,380 @@
-//! カタログ座標と距離をpcで扱う。天の川の簡略表示は原版のpreviewと同じ原座標。
+//! 太陽系と銀河の共通カメラ。読み込み・画面投影の完了世代を一致させて選択する。
+mod catalog;
 mod radiative;
-use eframe::egui::{self, Align2, Color32, FontId, Pos2};
-use mitaka_core::galaxy_radiative::RadiativeModel;
-use mitaka_core::{
-    extended_catalog::{load_sdss, SdssKind},
-    galaxy::{self, OurGalaxyModel},
+mod spatial;
+use crate::{
+    deep_sky::Display,
+    solar::{precise::AU_PER_PC, SolarCamera},
+    viewer::Picking,
 };
-use std::sync::Arc;
+use catalog::{objects, Kind, Objects};
+use eframe::egui::{self, Color32, Painter, Pos2, Rect, TextureHandle};
+pub(crate) use radiative::center;
+use spatial::{Id, Projection, Raster, View};
 use std::{
     io,
-    path::{Path, PathBuf},
-    sync::mpsc,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    },
 };
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Kind {
-    MilkyWay,
-    Clusters,
-    Nearby,
-    Sdss,
-    Quasars,
+#[derive(Default)]
+enum Source {
+    #[default]
+    Unloaded,
+    Loading(mpsc::Receiver<io::Result<Objects>>),
+    Loaded(Arc<Objects>),
+    Failed(String),
 }
-impl Kind {
-    const ALL: [Self; 5] = [
-        Self::MilkyWay,
-        Self::Clusters,
-        Self::Nearby,
-        Self::Sdss,
-        Self::Quasars,
-    ];
-    fn name(self) -> &'static str {
-        match self {
-            Self::MilkyWay => "天の川銀河",
-            Self::Clusters => "球状星団",
-            Self::Nearby => "近傍銀河",
-            Self::Sdss => "SDSS 銀河",
-            Self::Quasars => "SDSS クエーサー",
-        }
-    }
-    fn file(self) -> &'static str {
-        match self {
-            Self::MilkyWay => "ourgalaxy_model.dat",
-            Self::Clusters => "globular_cluster.dat",
-            Self::Nearby => "NBG.dat",
-            Self::Sdss => "SDSS_GAL.dat",
-            Self::Quasars => "SDSS_QSO.dat",
-        }
+struct Job {
+    view: View,
+    receiver: mpsc::Receiver<Option<Raster>>,
+    cancelled: Arc<AtomicBool>,
+}
+impl Drop for Job {
+    fn drop(&mut self) {
+        self.cancelled.store(true, Ordering::Relaxed);
     }
 }
-struct Object {
-    position: [f32; 3],
-    row: usize,
-    group: u8,
-    name: Option<String>,
+struct Frame {
+    view: View,
+    raster: Raster,
+    texture: TextureHandle,
 }
-impl Object {
-    fn label(&self, kind: Kind) -> String {
-        self.name.clone().unwrap_or_else(|| {
-            if kind == Kind::MilkyWay {
-                format!("点群 {} · 原行 {}", self.group + 1, self.row)
-            } else {
-                format!("{} · 原行 {}", kind.name(), self.row)
-            }
-        })
-    }
-}
-struct Objects {
-    radiation: Option<io::Result<Arc<RadiativeModel>>>,
-    rows: Vec<Object>,
-    source_rows: usize,
-    radius: f64,
-}
-fn objects(kind: Kind, root: &Path) -> io::Result<Objects> {
-    let path = root.join(kind.file());
-    let mut rows = Vec::new();
-    let mut source_rows = 0;
-    let mut radiation = None;
-    let mut add = |row: usize, ra: f32, dec: f32, distance: f32, name: Option<String>| {
-        source_rows += 1;
-        if let Some(p) = galaxy::evaluate_position_pc(ra, dec, distance).position {
-            rows.push(Object {
-                position: p.ecliptic.map(|x| x as f32),
-                row,
-                group: 0,
-                name,
-            });
-        }
-    };
-    match kind {
-        Kind::Clusters => {
-            for (i, g) in galaxy::load_globular_clusters(&path)?
-                .records
-                .into_iter()
-                .enumerate()
-            {
-                let name = String::from_utf8_lossy(&g.name_bytes)
-                    .trim_matches(['\0', ' '])
-                    .to_owned();
-                add(i + 1, g.ra_deg, g.dec_deg, g.distance_pc, Some(name));
-            }
-        }
-        Kind::Nearby => {
-            for (i, g) in galaxy::load_nearby_galaxies(&path)?
-                .records
-                .into_iter()
-                .enumerate()
-            {
-                let code = if g.catalog_code.is_ascii_graphic() {
-                    char::from(g.catalog_code).to_string()
-                } else {
-                    g.catalog_code.to_string()
-                };
-                add(
-                    i + 1,
-                    g.ra_deg,
-                    g.dec_deg,
-                    g.distance_pc,
-                    Some(format!("{code}{} · 原行 {}", g.catalog_number, i + 1)),
-                );
-            }
-        }
-        Kind::Sdss | Kind::Quasars => {
-            let family = if kind == Kind::Sdss {
-                SdssKind::Galaxy
-            } else {
-                SdssKind::Quasar
-            };
-            for (i, g) in load_sdss(&path, family)?.into_iter().enumerate() {
-                add(i + 1, g.ra_deg, g.dec_deg, g.distance_pc, None);
-            }
-        }
-        Kind::MilkyWay => {
-            let model = OurGalaxyModel::load(&path)?;
-            radiation = Some(RadiativeModel::from_model(&model).map(Arc::new));
-            for (group, cloud) in model.clouds.into_iter().enumerate() {
-                for (i, position) in cloud.positions_pc.into_iter().enumerate() {
-                    source_rows += 1;
-                    if position.iter().all(|p| p.is_finite()) {
-                        rows.push(Object {
-                            position,
-                            row: i + 1,
-                            group: group as u8,
-                            name: None,
-                        });
-                    }
-                }
-            }
-        }
-    }
-    let radius = rows
-        .iter()
-        .map(|o| o.position.map(f64::from))
-        .map(|p| p[0].hypot(p[1]).hypot(p[2]))
-        .fold(1_f64, f64::max);
-    Ok(Objects {
-        radiation,
-        rows,
-        source_rows,
-        radius,
-    })
-}
-
 pub struct Browser {
-    show_radiation: bool,
-    radiation: radiative::Radiation,
     root: PathBuf,
+    sources: [Source; 5],
     kind: Kind,
-    objects: Option<Objects>,
-    pending: Option<mpsc::Receiver<io::Result<Objects>>>,
-    error: Option<String>,
     pub controls: bool,
-    yaw: f64,
-    pitch: f64,
-    zoom: f64,
-    center: [f64; 3],
-    selected: Option<usize>,
+    radiation: radiative::Radiation,
+    show_radiation: bool,
+    local_visible: [bool; 3],
+    selected: Option<Id>,
     query: String,
     note: String,
+    frame: Option<Frame>,
+    job: Option<Job>,
+    expected: Option<View>,
 }
 impl Browser {
-    pub fn new(root: PathBuf, ctx: &egui::Context) -> Self {
-        let mut result = Self {
-            show_radiation: false,
-            radiation: Default::default(),
+    pub fn new(root: PathBuf, _: &egui::Context) -> Self {
+        Self {
             root,
+            sources: Default::default(),
             kind: Kind::MilkyWay,
-            objects: None,
-            pending: None,
-            error: None,
             controls: false,
-            yaw: 0.55,
-            pitch: 0.65,
-            zoom: 1.,
-            center: [0.; 3],
+            radiation: Default::default(),
+            show_radiation: true,
+            local_visible: [true; 3],
             selected: None,
             query: String::new(),
             note: String::new(),
-        };
-        result.load(ctx);
-        result
+            frame: None,
+            job: None,
+            expected: None,
+        }
     }
-    fn load(&mut self, ctx: &egui::Context) {
-        let kind = self.kind;
-        let root = self.root.clone();
-        let ctx = ctx.clone();
-        let (tx, rx) = mpsc::channel();
-        self.pending = Some(rx);
-        self.objects = None;
-        self.radiation = Default::default();
-        self.error = None;
-        self.selected = None;
-        self.center = [0.; 3];
-        self.zoom = 1.;
-        self.note.clear();
-        std::thread::spawn(move || {
-            let _ = tx.send(objects(kind, &root));
-            ctx.request_repaint();
-        });
+    fn flag<'a>(&'a mut self, kind: Kind, display: &'a mut Display) -> &'a mut bool {
+        match kind {
+            Kind::Sdss => &mut display.galaxies,
+            Kind::Quasars => &mut display.quasars,
+            _ => &mut self.local_visible[kind as usize],
+        }
     }
-    fn collect(&mut self) {
-        if let Some(rx) = &self.pending {
-            match rx.try_recv() {
-                Ok(result) => {
-                    self.pending = None;
-                    match result {
-                        Ok(o) => self.objects = Some(o),
-                        Err(e) => self.error = Some(e.to_string()),
-                    }
-                }
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    self.pending = None;
-                    self.error = Some("読込処理が終了しました".into());
-                }
-                Err(mpsc::TryRecvError::Empty) => {}
+    fn catalog(&self, kind: Kind) -> Option<&Arc<Objects>> {
+        if let Source::Loaded(cat) = &self.sources[kind as usize] {
+            Some(cat)
+        } else {
+            None
+        }
+    }
+    fn prepare(&mut self, ctx: &egui::Context, display: &Display) {
+        for (kind, enabled) in Kind::ALL.into_iter().zip([
+            self.local_visible[0],
+            self.local_visible[1],
+            self.local_visible[2],
+            display.galaxies,
+            display.quasars,
+        ]) {
+            let slot = &mut self.sources[kind as usize];
+            if matches!(slot, Source::Unloaded) && (enabled || self.controls && kind == self.kind) {
+                let root = self.root.clone();
+                let ctx = ctx.clone();
+                let (send, rx) = mpsc::channel();
+                *slot = Source::Loading(rx);
+                std::thread::spawn(move || {
+                    let _ = send.send(objects(kind, &root));
+                    ctx.request_repaint();
+                });
             }
-        }
-    }
-    fn search(&mut self) {
-        self.note.clear();
-        let query = self.query.trim().to_lowercase();
-        if query.is_empty() {
-            return;
-        }
-        if let Some(o) = &self.objects {
-            let row = query.parse::<usize>().ok();
-            let found = o.rows.iter().position(|r| {
-                row == Some(r.row)
-                    || r.name
-                        .as_ref()
-                        .is_some_and(|name| name.to_lowercase().contains(&query))
-            });
-            if let Some(i) = found {
-                self.selected = Some(i);
-                self.center = o.rows[i].position.map(f64::from);
-            } else {
-                self.note = "該当するレコードがありません".into();
+            if let Source::Loading(rx) = slot {
+                match rx.try_recv() {
+                    Ok(Ok(cat)) => *slot = Source::Loaded(Arc::new(cat)),
+                    Ok(Err(e)) => *slot = Source::Failed(e.to_string()),
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        *slot = Source::Failed("読込処理が終了しました".into())
+                    }
+                    Err(mpsc::TryRecvError::Empty) => {}
+                }
             }
         }
     }
     pub fn ready(&self) -> io::Result<bool> {
-        if let Some(error) = &self.error {
-            return Err(io::Error::other(error.clone()));
+        if self.kind == Kind::MilkyWay && self.show_radiation {
+            if let Some(view) = self.expected {
+                if !self.radiation.ready(view.camera)? {
+                    return Ok(false);
+                }
+            }
         }
-        Ok(self.objects.is_some())
+        match &self.sources[self.kind as usize] {
+            Source::Failed(e) => Err(io::Error::other(e.clone())),
+            Source::Loaded(_) => Ok(self.frame.as_ref().is_some_and(|f| {
+                Some(f.view) == self.expected && f.view.mask & (1 << self.kind as usize) != 0
+            })),
+            _ => Ok(false),
+        }
     }
-    pub fn panel(&mut self, ctx: &egui::Context) {
-        self.collect();
-        let mut controls = self.controls;
+    pub(crate) fn select_sdss(&mut self, display: &mut Display) {
+        self.kind = Kind::Sdss;
+        display.galaxies = true;
+    }
+    pub fn open(&mut self, camera: &mut SolarCamera, rect: Rect) {
+        self.controls = true;
+        self.overview(camera, rect);
+    }
+    fn overview(&self, camera: &mut SolarCamera, rect: Rect) {
+        let (center, radius) = if self.kind == Kind::MilkyWay {
+            (radiative::center(), 8000.)
+        } else {
+            ([0.; 3], self.catalog(self.kind).map_or(8000., |o| o.radius))
+        };
+        let [w, h] = spatial::dimensions(rect);
+        let t = (camera.fov * 0.5).to_radians().tan() * f64::from((w / h).min(1.));
+        camera.set_target_pc(center);
+        camera.distance = radius * 1_f64.hypot(t) / t * AU_PER_PC;
+    }
+    fn select_row(&mut self, camera: &mut SolarCamera) {
+        let q = self.query.trim().to_lowercase();
+        if q.is_empty() {
+            return;
+        }
+        let row = q.parse::<usize>().ok();
+        let found = self.catalog(self.kind).and_then(|c| {
+            c.rows
+                .iter()
+                .enumerate()
+                .find(|(_, o)| {
+                    row == Some(o.row)
+                        || o.name
+                            .as_ref()
+                            .is_some_and(|n| n.to_lowercase().contains(&q))
+                })
+                .map(|(i, o)| (i, o.position))
+        });
+        if let Some((i, p)) = found {
+            self.selected = Some(Id(self.kind, i));
+            camera.set_target_pc(p);
+            self.note.clear();
+        } else {
+            self.note = "該当する位置付きレコードがありません".into();
+        }
+    }
+    pub fn panel(
+        &mut self,
+        ctx: &egui::Context,
+        camera: &mut SolarCamera,
+        rect: Rect,
+        display: &mut Display,
+    ) {
+        if !self.controls {
+            return;
+        }
+        let mut open = true;
         egui::Window::new("銀河カタログ")
-            .open(&mut controls)
+            .open(&mut open)
             .show(ctx, |ui| {
-                let previous = self.kind;
-                egui::ComboBox::from_label("表示するカタログ")
-                    .selected_text(self.kind.name())
-                    .show_ui(ui, |ui| {
-                        for kind in Kind::ALL {
-                            ui.selectable_value(&mut self.kind, kind, kind.name());
+                for kind in Kind::ALL {
+                    ui.horizontal(|ui| {
+                        ui.checkbox(self.flag(kind, display), kind.name());
+                        if ui.selectable_label(self.kind == kind, "検索対象").clicked() {
+                            self.kind = kind;
                         }
                     });
-                if previous != self.kind {
-                    self.load(ctx);
                 }
-                if self.kind == Kind::MilkyWay {
-                    ui.checkbox(&mut self.show_radiation, "銀河の放射・吸収");
-                    if self.show_radiation {
-                        ui.label(format!(
-                            "銀河中心からの視点距離 {:.0} pc",
-                            (40000. / self.zoom).clamp(1., 1e7)
-                        ));
-                        if ui.button("全体を表示").clicked() {
-                            self.zoom = 1.;
-                        }
-                        return;
-                    }
-                }
+                ui.checkbox(&mut self.show_radiation, "天の川の放射・吸収");
                 ui.horizontal(|ui| {
-                    ui.label("原行番号・名称");
-                    let input = ui.text_edit_singleline(&mut self.query);
+                    let input = ui.add(
+                        egui::TextEdit::singleline(&mut self.query).hint_text("原行番号・名称"),
+                    );
                     if (input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
-                        || ui.button("検索").clicked()
+                        || ui.button("検索して中心へ").clicked()
                     {
-                        self.search();
+                        *self.flag(self.kind, display) = true;
+                        self.select_row(camera);
                     }
                 });
-                if let Some(o) = &self.objects {
+                if let Some(c) = self.catalog(self.kind) {
                     ui.label(format!(
-                        "{} · 有効位置 {} / 原行 {} 件",
+                        "{} · 有効 {} / 原行 {} 件",
                         self.kind.file(),
-                        o.rows.len(),
-                        o.source_rows
+                        c.rows.len(),
+                        c.source_rows
                     ));
-                    if let Some(p) = self.selected.and_then(|i| o.rows.get(i)) {
+                }
+                if let Source::Failed(e) = &self.sources[self.kind as usize] {
+                    ui.label(e);
+                }
+                if let Some(Id(k, i)) = self.selected {
+                    if let Some(p) = self.catalog(k).and_then(|c| c.rows.get(i)) {
                         ui.label(format!(
-                            "{}\nX {:.2}  Y {:.2}  Z {:.2} pc",
-                            p.label(self.kind),
+                            "{}\nX {:.3}  Y {:.3}  Z {:.3} pc",
+                            p.label(k),
                             p.position[0],
                             p.position[1],
                             p.position[2]
                         ));
+                        if ui.button("選択した天体を中心へ").clicked() {
+                            camera.set_target_pc(p.position);
+                        }
                     }
                 }
                 if !self.note.is_empty() {
                     ui.label(&self.note);
                 }
                 if ui.button("全体を表示").clicked() {
-                    self.center = [0.; 3];
-                    self.zoom = 1.;
+                    self.overview(camera, rect);
+                }
+                if ui.button("太陽系を表示").clicked() {
+                    *camera = SolarCamera::default();
+                    self.selected = None;
                 }
             });
-        self.controls = controls;
+        self.controls = open;
     }
-    pub fn draw(&mut self, ui: &mut egui::Ui, picking: crate::viewer::Picking) {
-        self.collect();
-        let Some(objects) = &self.objects else {
-            ui.centered_and_justified(|ui| {
-                ui.label(self.error.as_deref().unwrap_or("銀河カタログを読み込み中…"))
-            });
-            return;
-        };
-        let (res, painter) =
-            ui.allocate_painter(ui.available_size(), egui::Sense::click_and_drag());
-        let rect = res.rect;
-        if res.dragged() {
-            let d = res.drag_delta();
-            self.yaw -= 0.006 * f64::from(d.x);
-            self.pitch = (self.pitch + 0.006 * f64::from(d.y)).clamp(-1.56, 1.56);
-        }
-        if res.hovered() {
-            self.zoom = (self.zoom
-                * ui.input(|i| {
-                    f64::from(
-                        (i.smooth_scroll_delta.y * 0.008).clamp(-2., 2.).exp() * i.zoom_delta(),
-                    )
-                }))
-            .clamp(0.05, 1e6);
-        }
-        if self.kind == Kind::MilkyWay && self.show_radiation {
-            match &objects.radiation {
-                Some(Ok(model)) => self
-                    .radiation
-                    .draw(&painter, model, rect, self.yaw, self.pitch, self.zoom),
-                Some(Err(e)) => {
-                    painter.text(
-                        rect.center(),
-                        Align2::CENTER_CENTER,
-                        e.to_string(),
-                        FontId::proportional(14.),
-                        Color32::LIGHT_GRAY,
-                    );
+    pub fn paint(
+        &mut self,
+        painter: &Painter,
+        response: &egui::Response,
+        camera: SolarCamera,
+        display: &Display,
+        picking: Picking,
+    ) {
+        let rect = response.rect;
+        self.prepare(painter.ctx(), display);
+        let milky = self.local_visible[0] && radiative::galactic_view(camera).is_some();
+        if milky && self.show_radiation {
+            if let Some(Source::Loaded(cat)) = self.sources.first() {
+                if let Some(Ok(m)) = &cat.radiation {
+                    self.radiation.draw(painter, m, rect, camera);
                 }
-                None => {}
             }
-            return;
         }
-        let size = f64::from(rect.width().min(rect.height())) * 0.46 * self.zoom / objects.radius;
-        let (sy, cy) = self.yaw.sin_cos();
-        let (sp, cp) = self.pitch.sin_cos();
-        let project = |p: [f32; 3]| {
-            let x = f64::from(p[0]) - self.center[0];
-            let y = f64::from(p[1]) - self.center[1];
-            let z = f64::from(p[2]) - self.center[2];
-            rect.center()
-                + egui::vec2(
-                    ((cy * x + sy * y) * size) as f32,
-                    (-((-sy * x + cy * y) * sp + cp * z) * size) as f32,
-                )
+        let flags = [
+            milky,
+            self.local_visible[1],
+            self.local_visible[2],
+            display.galaxies,
+            display.quasars,
+        ];
+        let catalogs: Vec<_> = [
+            Kind::Sdss,
+            Kind::Quasars,
+            Kind::Clusters,
+            Kind::Nearby,
+            Kind::MilkyWay,
+        ]
+        .into_iter()
+        .filter_map(|k| {
+            if flags[k as usize] {
+                self.catalog(k).map(|c| (k, Arc::clone(c)))
+            } else {
+                None
+            }
+        })
+        .collect();
+        let [width, height] = spatial::dimensions(rect);
+        let mask = catalogs.iter().fold(0, |m, (k, _)| m | 1 << *k as usize);
+        let view = View {
+            camera,
+            width,
+            height,
+            scale: painter.ctx().pixels_per_point(),
+            mask,
         };
-        let stride = objects.rows.len().div_ceil(32000).max(1);
-        let pointer = picking.pointer(&res);
-        let mut best = 64f32;
-        for (i, p) in objects.rows.iter().enumerate().step_by(stride) {
-            let xy = project(p.position);
-            if rect.contains(xy) {
-                let color = [
-                    Color32::from_rgb(184, 197, 219),
-                    Color32::from_rgb(139, 164, 203),
-                    Color32::from_rgb(225, 180, 145),
-                    Color32::from_rgb(186, 166, 134),
-                ][usize::from(p.group)];
-                painter.rect_filled(
-                    egui::Rect::from_center_size(xy, egui::vec2(1.6, 1.6)),
-                    0.,
-                    color,
-                );
-                if let Some(click) = pointer {
-                    let d = xy.distance_sq(click);
-                    if d <= best {
-                        best = d;
-                        self.selected = Some(i);
+        self.expected = Some(view);
+        if let Some(job) = &self.job {
+            if job.view != view {
+                job.cancelled.store(true, Ordering::Relaxed);
+            }
+            match job.receiver.try_recv() {
+                Ok(result) => {
+                    if let Some(mut raster) = result.filter(|_| job.view == view) {
+                        let image = std::mem::replace(
+                            &mut raster.image,
+                            egui::ColorImage::new([0, 0], Color32::TRANSPARENT),
+                        );
+                        let texture = painter.ctx().load_texture(
+                            "銀河カタログの投影",
+                            image,
+                            egui::TextureOptions::NEAREST,
+                        );
+                        self.frame = Some(Frame {
+                            view,
+                            raster,
+                            texture,
+                        });
+                    }
+                    self.job = None;
+                }
+                Err(mpsc::TryRecvError::Disconnected) => self.job = None,
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+        if let Some(frame) = self.frame.as_ref().filter(|f| f.view == view) {
+            painter.image(
+                frame.texture.id(),
+                rect,
+                Rect::from_min_max(Pos2::ZERO, egui::pos2(1., 1.)),
+                Color32::WHITE,
+            );
+            if let Some(click) = picking.pointer(response) {
+                let q = click - rect.min;
+                if let Some(hit) = frame.raster.pick(f64::from(q.x), f64::from(q.y), 6.) {
+                    self.selected = Some(hit);
+                }
+            }
+            if let Some(Id(k, i)) = self.selected.filter(|id| mask & (1 << id.0 as usize) != 0) {
+                if let Some(p) = self.catalog(k).and_then(|c| c.rows.get(i)) {
+                    if let Some(d) = Projection::new(view).shape(k, p) {
+                        let xy = rect.min + egui::vec2(d.x as f32, d.y as f32);
+                        painter.circle_stroke(xy, 6., egui::Stroke::new(1_f32, Color32::GOLD));
+                        painter.text(
+                            xy + egui::vec2(8., -4.),
+                            egui::Align2::LEFT_BOTTOM,
+                            p.label(k),
+                            egui::FontId::proportional(13.),
+                            Color32::GOLD,
+                        );
                     }
                 }
             }
+        } else if self.job.is_none() && mask != 0 {
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let flag = Arc::clone(&cancelled);
+            let ctx = painter.ctx().clone();
+            let (tx, receiver) = mpsc::channel();
+            self.job = Some(Job {
+                view,
+                receiver,
+                cancelled,
+            });
+            std::thread::spawn(move || {
+                let _ = tx.send(Raster::render(view, &catalogs, &flag));
+                ctx.request_repaint();
+            });
         }
-        if let Some(p) = self.selected.and_then(|i| objects.rows.get(i)) {
-            let xy = project(p.position);
-            painter.circle_stroke(xy, 6., egui::Stroke::new(1_f32, Color32::GOLD));
-            painter.text(
-                xy + egui::vec2(8., -4.),
-                Align2::LEFT_BOTTOM,
-                p.label(self.kind),
-                FontId::proportional(13.),
-                Color32::GOLD,
-            );
-        }
-        let label = if stride > 1 {
-            format!("{} · 表示間隔 {} 行", self.kind.name(), stride)
-        } else {
-            self.kind.name().into()
-        };
-        painter.text(
-            Pos2::new(rect.left() + 12., rect.bottom() - 12.),
-            Align2::LEFT_BOTTOM,
-            label,
-            FontId::proportional(13.),
-            Color32::LIGHT_GRAY,
-        );
     }
 }
