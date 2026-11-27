@@ -143,13 +143,17 @@ impl App {
             .as_ref()
             .map_or(J2000, |data| data.initial_date(J2000));
         let utc = utc_date(jd).ok_or("日時の範囲外です")?;
+        let mut media = media_preview::Media::default();
+        if let Some(data) = &initial {
+            media.reset(&data.root);
+        }
         Ok(Self {
             terrain_amplification: Default::default(),
             data: initial,
             motion: Default::default(),
             landscape_render: Default::default(),
             projector: Default::default(),
-            media: Default::default(),
+            media,
             scripts: Default::default(),
             playback: Default::default(),
             session: Default::default(),
@@ -213,6 +217,7 @@ impl App {
                     self.options.layers.observer.clear();
                     self.options.layers.selected = None;
                     self.options.layers.exceptions.clear();
+                    self.media.reset(&data.root);
                     self.data = Some(data);
                     if jd != self.jd {
                         self.set_date(jd);
@@ -237,6 +242,7 @@ impl App {
         match command {
             Command::Open => self.open(),
             Command::Media => self.media.choose(ctx),
+            Command::MediaList => self.media.browser = true,
             Command::Projector => {
                 self.projector.controls = true;
                 self.projector.open = true;

@@ -165,6 +165,11 @@ print(string.rep("星", 2731))
 print(string.rep("x", 8190), "🪐")
 print(string.rep("x", 8191) .. string.char(0xe3, 0x81))
 print(string.char(255))
+assert(Images.name=="One")
+Images.index=1
+Movies:pause()
+GUI.soundControler=true
+assert(not pcall(function() Images.playing=true end))
 Time:stop()
 Camera:setZoomLogTo(4*UNIT_AU)
 Camera:setEulerTo(10,20,30,0.5,false)
@@ -217,6 +222,23 @@ assert(not pcall(function() Camera:setAzimuthTo(0,1,"bad") end))
             "done" => {
                 assert_eq!(msg["ok"], true, "{msg}");
                 break;
+            }
+            "media" => {
+                match (
+                    msg["family"].as_str(),
+                    msg["command"].as_str(),
+                    msg["key"].as_str(),
+                ) {
+                    (Some("Images"), Some("get"), Some("name")) => json!({"ok":true,"value":"One"}),
+                    (Some("Images"), Some("set"), Some("index")) if msg["value"] == 1 => {
+                        json!({"ok":true})
+                    }
+                    (Some("Movies"), Some("call"), Some("pause")) => json!({"ok":true}),
+                    (Some("GUI"), Some("set"), Some("soundControler")) if msg["value"] == true => {
+                        json!({"ok":true})
+                    }
+                    _ => panic!("unexpected media operation"),
+                }
             }
             other => panic!("unexpected host request {other}"),
         };

@@ -124,6 +124,7 @@ impl App {
 
     fn script_message(&mut self, msg: &Value, ctx: &egui::Context) -> Result<Value, String> {
         match msg["op"].as_str() {
+            Some("media") => self.media.script(msg, ctx),
             Some("snapshot") => Ok(self.camera_snapshot(self.options.layers.snapshot(json!({
                 "ok":true,
                 "jd":self.jd,
