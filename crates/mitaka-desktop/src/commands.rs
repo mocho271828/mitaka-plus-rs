@@ -11,6 +11,9 @@ pub enum Command {
     ScriptPanel,
     LocalHtml,
     Open,
+    Quit,
+    ZoomIn,
+    ZoomOut,
     RememberState,
     RecallState,
     LoadState,
@@ -43,6 +46,8 @@ const FILE: &[(Command, &str)] = &[
     (Command::LoadState, "表示状態を開く…"),
     (Command::SaveState, "表示状態を保存…"),
     (Command::Export, "画像を書き出す…"),
+    #[cfg(not(target_os = "macos"))]
+    (Command::Quit, "終了"),
 ];
 const DISPLAY: &[(Command, &str)] = &[
     (Command::SaveWindow, "主ウィンドウの位置を記憶"),
@@ -73,6 +78,19 @@ const SETTINGS: &[(Command, &str)] = &[
 const GROUPS: &[(&str, &[(Command, &str)])] =
     &[("ファイル", FILE), ("表示", DISPLAY), ("操作", SETTINGS)];
 
+#[cfg(target_os = "macos")]
+pub fn native_shortcut(command: Command) -> Option<muda::accelerator::Accelerator> {
+    use muda::accelerator::{Accelerator, Code, Modifiers};
+    let (modifiers, key) = match command {
+        Command::Open => (Modifiers::SUPER, Code::KeyO),
+        Command::SaveState => (Modifiers::SUPER, Code::KeyS),
+        Command::Objects => (Modifiers::SUPER, Code::KeyF),
+        Command::Fullscreen => (Modifiers::CONTROL | Modifiers::SUPER, Code::KeyF),
+        _ => return None,
+    };
+    Some(Accelerator::new(Some(modifiers), key))
+}
+
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub struct Menus {
     _menu: muda::Menu,
@@ -97,7 +115,11 @@ impl Menus {
         for &(name, items) in GROUPS {
             let submenu = muda::Submenu::new(name, true);
             for &(command, label) in items {
-                let item = muda::MenuItem::with_id(format!("{command:?}"), label, true, None);
+                #[cfg(target_os = "macos")]
+                let shortcut = native_shortcut(command);
+                #[cfg(target_os = "windows")]
+                let shortcut = None;
+                let item = muda::MenuItem::with_id(format!("{command:?}"), label, true, shortcut);
                 submenu.append(&item)?;
             }
             menu.append(&submenu)?;
