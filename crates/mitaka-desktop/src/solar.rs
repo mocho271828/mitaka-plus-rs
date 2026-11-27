@@ -683,7 +683,15 @@ impl Solar {
             layers.milky_way,
             response.dragged() || self.flight.is_some() || self.surface_flight.is_some(),
         )?;
-        galaxies.paint(&painter, &response, self.camera, &layers.deep_sky, picking);
+        let surface_view = has_site || self.surface_flight.is_some() || self.landed.is_some();
+        galaxies.paint(
+            &painter,
+            &response,
+            self.camera,
+            &layers.deep_sky,
+            picking,
+            surface_view,
+        );
         let click = picking.pointer(&response);
         let sky = sky::Sky {
             data,
