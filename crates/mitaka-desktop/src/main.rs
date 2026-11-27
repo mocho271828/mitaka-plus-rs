@@ -462,7 +462,7 @@ impl App {
                 self.objects.stop_tracking();
             }
             Command::Reset if self.view == View::Surface => self.view = View::Solar,
-            Command::Reset => *self.camera() = Camera::default(),
+            Command::Reset => *self.manual_chart_camera() = Camera::default(),
         }
     }
     fn search_star(&mut self) {
@@ -735,7 +735,7 @@ impl App {
         let view = self.view;
         if response.dragged() {
             let delta = response.drag_delta();
-            self.camera().pan(
+            self.manual_chart_camera().pan(
                 view,
                 f64::from(delta.x / rect.width()),
                 f64::from(delta.y / rect.height()),
@@ -744,7 +744,7 @@ impl App {
         if let Some(mouse) = response.hover_pos() {
             let (pan, factor) = ui.input(chart_input::gesture);
             if pan != egui::Vec2::ZERO {
-                self.camera().pan(
+                self.manual_chart_camera().pan(
                     view,
                     f64::from(pan.x / rect.width()),
                     f64::from(pan.y / rect.height()),
@@ -833,13 +833,11 @@ impl App {
             };
             self.solar.layers.select(view, body);
             self.selected = star;
-            chart_input::focus(
-                self.picking,
-                response.double_clicked(),
-                focused,
-                view,
-                self.camera(),
-            );
+            if let Some(coords) =
+                chart_input::focus_target(self.picking, response.double_clicked(), focused)
+            {
+                self.manual_chart_camera().center(view, coords);
+            }
             ui.ctx().request_repaint();
         }
     }
