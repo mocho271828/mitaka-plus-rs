@@ -28,6 +28,33 @@ impl App {
             return;
         };
         match target {
+            Position::Planet(id) => {
+                self.selected = None;
+                if matches!(self.view, View::Solar | View::Surface) || id == 3 {
+                    let result = self
+                        .solar
+                        .prepare(&data.ephemeris, self.jd)
+                        .and_then(|_| self.solar.approach(id));
+                    match result {
+                        Ok(()) => {
+                            self.motion = Default::default();
+                            self.view = View::Solar;
+                        }
+                        Err(e) => self.error = Some(e.to_string()),
+                    }
+                } else {
+                    match crate::planet_layers::positions(&data.ephemeris, self.jd) {
+                        Ok(bodies) => {
+                            if let Some(body) = bodies.iter().find(|b| b.id == id) {
+                                self.solar.layers.visible = true;
+                                self.solar.layers.select(self.view, Some(id));
+                                self.center_object_chart(body.equatorial);
+                            }
+                        }
+                        Err(e) => self.error = Some(e.to_string()),
+                    }
+                }
+            }
             Position::Sky(coords, hip) => {
                 self.selected = hip;
                 match self.objects.kind {
@@ -52,21 +79,8 @@ impl App {
                 {
                     self.options.magnitude = self.options.magnitude.max(s.magnitude);
                 }
-                let (view, coords) = if self.view == View::Horizon {
-                    match ObservationFrame::new(self.latitude, self.longitude, self.jd)
-                        .and_then(|f| f.to_horizontal(coords[0], coords[1]))
-                    {
-                        Ok(horizontal) => (View::Horizon, horizontal),
-                        Err(e) => {
-                            self.error = Some(e.to_string());
-                            return;
-                        }
-                    }
-                } else {
-                    (View::Sky, coords)
-                };
-                self.view = view;
-                self.camera().center(view, coords);
+                self.solar.layers.select(self.view, None);
+                self.center_object_chart(coords);
             }
             Position::Solar(point, _)
                 if self.view == View::Horizon
@@ -103,6 +117,23 @@ impl App {
             }
         }
     }
+    fn center_object_chart(&mut self, coords: [f64; 2]) {
+        let (view, coords) = if self.view == View::Horizon {
+            match ObservationFrame::new(self.latitude, self.longitude, self.jd)
+                .and_then(|f| f.to_horizontal(coords[0], coords[1]))
+            {
+                Ok(horizontal) => (View::Horizon, horizontal),
+                Err(e) => {
+                    self.error = Some(e.to_string());
+                    return;
+                }
+            }
+        } else {
+            (View::Sky, coords)
+        };
+        self.view = view;
+        self.camera().center(view, coords);
+    }
     pub(crate) fn object_on_sky(&self, chart: &Chart<'_>, painter: &egui::Painter) {
         if let Some((label, Position::Sky([ra, dec], _))) = &self.objects.marker {
             if let Some(p) = chart.observed(*ra, *dec) {
@@ -135,7 +166,7 @@ impl App {
             if !self.objects.display.group_visible(kind) {
                 continue;
             }
-            let Some(c) = self.objects.scene_catalog(kind, &sky.root, ui.ctx()) else {
+            let Some(c) = self.objects.scene_catalog(kind, sky, ui.ctx()) else {
                 continue;
             };
             let scene = super::layers::Overlay {

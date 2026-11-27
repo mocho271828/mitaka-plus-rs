@@ -6,21 +6,19 @@ pub(crate) mod display;
 pub(crate) mod horizon;
 mod layers;
 mod satellite;
+mod search;
 pub(crate) mod selections;
 mod spacecraft;
 use crate::catalog::SkyData;
 use catalog::{error, Catalog};
 use eframe::egui;
-use std::{
-    io,
-    path::{Path, PathBuf},
-    rc::Rc,
-};
+use std::{io, path::PathBuf, rc::Rc};
 
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default)]
 enum Kind {
     #[default]
     Stars,
+    Planets,
     Constellations,
     Ngc,
     Galaxies,
@@ -30,7 +28,16 @@ enum Kind {
     Spacecraft,
 }
 impl Kind {
-    const ALL: [Self; 8] = [
+    const GENERAL: [Self; 6] = [
+        Self::Planets,
+        Self::Stars,
+        Self::Constellations,
+        Self::Ngc,
+        Self::Galaxies,
+        Self::Quasars,
+    ];
+    const ALL: [Self; 9] = [
+        Self::Planets,
         Self::Stars,
         Self::Constellations,
         Self::Ngc,
@@ -42,7 +49,8 @@ impl Kind {
     ];
     fn label(self) -> &'static str {
         match self {
-            Self::Stars => "恒星の固有名",
+            Self::Stars => "HIP 恒星",
+            Self::Planets => "太陽系の天体",
             Self::Constellations => "星座",
             Self::Ngc => "NGC / IC",
             Self::Galaxies => "SDSS 銀河",
@@ -55,6 +63,7 @@ impl Kind {
 }
 #[derive(Clone, Copy, Debug)]
 enum Position {
+    Planet(usize),
     Sky([f64; 2], Option<i32>),
     Solar([f64; 3], f64),
 }
@@ -80,6 +89,8 @@ pub(crate) struct Browser {
     pub open: bool,
     pub(crate) selections: selections::Selections,
     kind: Kind,
+    scope: Option<Kind>,
+    search: search::Search,
     root: Option<PathBuf>,
     data: Option<Rc<Catalog>>,
     loading: bool,
@@ -99,7 +110,7 @@ impl Browser {
         self.follow = false;
     }
 
-    fn load(&mut self, root: PathBuf, ctx: &egui::Context) {
+    fn load(&mut self, root: PathBuf) {
         self.root = Some(root.clone());
         self.data = None;
         self.active = None;
@@ -108,15 +119,14 @@ impl Browser {
         self.filtered = None;
         self.error = None;
         self.loading = true;
-        self.poll(ctx);
     }
     fn scene_catalog(
         &mut self,
         kind: Kind,
-        root: &Path,
+        sky: &SkyData,
         ctx: &egui::Context,
     ) -> Option<Rc<Catalog>> {
-        match self.catalogs.get(kind, root, ctx) {
+        match self.catalogs.get(kind, sky, ctx) {
             Ok(c) => c,
             Err(e) => {
                 self.error = Some(e);
@@ -130,6 +140,8 @@ impl Browser {
             self.filtered = None;
         }
         self.kind = kind;
+        self.scope = Some(kind);
+        self.search.reset();
         self.loading = false;
         self.data = Some(c);
         self.active = Some(index);
@@ -140,8 +152,20 @@ impl Browser {
     pub(crate) fn restore_display(v: &serde_json::Value) -> display::Display {
         display::Display::restore(v)
     }
-    pub(crate) fn inspect_sirius(&mut self, sky: &SkyData) -> io::Result<()> {
-        self.inspect(sky, Kind::Stars, "シリウス")
+    pub(crate) fn inspect_star(&mut self, sky: &SkyData) -> io::Result<i32> {
+        let (hip, query) = if sky
+            .layers
+            .names
+            .get(&32349)
+            .is_some_and(|name| name == "シリウス")
+        {
+            (32349, "シリウス".to_owned())
+        } else {
+            let hip = sky.stars[0].hip;
+            (hip, format!("HIP {hip}"))
+        };
+        self.inspect(sky, Kind::Stars, &query)?;
+        Ok(hip)
     }
     pub(crate) fn inspect_voyager(&mut self, sky: &SkyData) -> io::Result<()> {
         self.display.craft = true;
@@ -151,6 +175,8 @@ impl Browser {
     }
     fn inspect(&mut self, sky: &SkyData, kind: Kind, name: &str) -> io::Result<()> {
         self.kind = kind;
+        self.scope = Some(kind);
+        self.search.reset();
 
         self.root = Some(sky.root.clone());
         let c = Catalog::load(self.kind, &sky.root)?;
@@ -171,14 +197,11 @@ impl Browser {
         self.data = Some(c);
         Ok(())
     }
-    fn poll(&mut self, ctx: &egui::Context) {
+    fn poll(&mut self, sky: &SkyData, ctx: &egui::Context) {
         if !self.loading {
             return;
         }
-        let Some(root) = self.root.as_deref() else {
-            return;
-        };
-        match self.catalogs.get(self.kind, root, ctx) {
+        match self.catalogs.get(self.kind, sky, ctx) {
             Ok(Some(c)) => {
                 self.filtered = c.search(&self.query);
                 self.data = Some(c);
@@ -193,28 +216,57 @@ impl Browser {
     }
     fn panel(&mut self, ctx: &egui::Context, sky: &SkyData, epoch: [f64; 3]) -> Option<Position> {
         if self.open && self.root.as_ref() != Some(&sky.root) {
-            self.load(sky.root.clone(), ctx);
+            self.root = Some(sky.root.clone());
+            if self.scope.is_some_and(|k| !Kind::GENERAL.contains(&k)) {
+                self.load(sky.root.clone());
+            }
         }
-        self.poll(ctx);
+        self.poll(sky, ctx);
         let mut open = self.open;
         let mut apply = std::mem::take(&mut self.focus_next);
         egui::Window::new("天体ブラウザ")
             .open(&mut open)
             .default_width(420.)
             .show(ctx, |ui| {
-                let before = self.kind;
-                ui.add_enabled_ui(!self.loading, |ui| {
-                    egui::ComboBox::from_label("カタログ")
-                        .selected_text(self.kind.label())
-                        .show_ui(ui, |ui| {
-                            for k in Kind::ALL {
-                                ui.selectable_value(&mut self.kind, k, k.label());
-                            }
-                        });
-                });
-                if self.kind != before {
-                    self.query.clear();
-                    self.load(sky.root.clone(), ctx);
+                let before = self.scope;
+                egui::ComboBox::from_label("カタログ")
+                    .selected_text(self.scope.map_or("全種類", Kind::label))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.scope, None, "全種類");
+                        for k in Kind::ALL {
+                            ui.selectable_value(&mut self.scope, Some(k), k.label());
+                        }
+                    });
+                if self.scope != before {
+                    self.active = None;
+                    self.marker = None;
+                    self.data = None;
+                    self.error = None;
+                    self.loading = false;
+                    self.search.reset();
+                    if let Some(k) = self.scope.filter(|k| !Kind::GENERAL.contains(k)) {
+                        self.kind = k;
+                        self.query.clear();
+                        self.load(sky.root.clone());
+                        self.poll(sky, ctx);
+                    }
+                }
+                let general = self.scope.is_none_or(|k| Kind::GENERAL.contains(&k));
+                if general {
+                    if let Some((kind, i, c)) = self.search.panel(
+                        ui,
+                        &mut self.query,
+                        self.scope,
+                        sky,
+                        &mut self.catalogs,
+                        self.active.map(|i| (self.kind, i)),
+                    ) {
+                        self.kind = kind;
+                        self.active = Some(i);
+                        self.data = Some(c);
+                        self.epoch = None;
+                        apply = true;
+                    }
                 }
                 if self.loading {
                     ui.spinner();
@@ -222,44 +274,45 @@ impl Browser {
                     return;
                 }
                 if let Some(c) = &self.data {
-                    if ui
-                        .add(egui::TextEdit::singleline(&mut self.query).hint_text(
-                            if matches!(self.kind, Kind::Galaxies | Kind::Quasars) {
-                                "原ファイルの記録番号 (1 始まり)"
-                            } else {
-                                "名称・番号・原ファイルを検索"
-                            },
-                        ))
-                        .changed()
-                    {
-                        self.filtered = c.search(&self.query);
-                    }
-                    let count = self.filtered.as_ref().map_or_else(|| c.len(), Vec::len);
-                    ui.label(format!("{count} / {} 件", c.len()));
-                    let height = ui.text_style_height(&egui::TextStyle::Body) + 4.;
-                    egui::ScrollArea::vertical()
-                        .id_salt("object-results")
-                        .max_height(210.)
-                        .show_rows(ui, height, count, |ui, range| {
-                            for index in range {
-                                let i = self.filtered.as_ref().map_or(index, |rows| rows[index]);
-                                let row = ui.selectable_label(Some(i) == self.active, c.title(i));
-                                let mut center = row.clicked();
-                                row.context_menu(|ui| {
-                                    if ui.button("中央に表示").clicked() {
-                                        center = true;
-                                        ui.close_menu();
+                    if !general {
+                        if ui
+                            .add(
+                                egui::TextEdit::singleline(&mut self.query)
+                                    .hint_text("名称・番号・原ファイルを検索"),
+                            )
+                            .changed()
+                        {
+                            self.filtered = c.search(&self.query);
+                        }
+                        let count = self.filtered.as_ref().map_or_else(|| c.len(), Vec::len);
+                        ui.label(format!("{count} / {} 件", c.len()));
+                        let height = ui.text_style_height(&egui::TextStyle::Body) + 4.;
+                        egui::ScrollArea::vertical()
+                            .id_salt("object-results")
+                            .max_height(210.)
+                            .show_rows(ui, height, count, |ui, range| {
+                                for index in range {
+                                    let i =
+                                        self.filtered.as_ref().map_or(index, |rows| rows[index]);
+                                    let row =
+                                        ui.selectable_label(Some(i) == self.active, c.title(i));
+                                    let mut center = row.clicked();
+                                    row.context_menu(|ui| {
+                                        if ui.button("中央に表示").clicked() {
+                                            center = true;
+                                            ui.close_menu();
+                                        }
+                                    });
+                                    if center {
+                                        self.active = Some(i);
+                                        self.marker = None;
+                                        self.error = None;
+                                        self.epoch = None;
+                                        apply = true;
                                     }
-                                });
-                                if center {
-                                    self.active = Some(i);
-                                    self.marker = None;
-                                    self.error = None;
-                                    self.epoch = None;
-                                    apply = true;
                                 }
-                            }
-                        });
+                            });
+                    }
                     if matches!(self.kind, Kind::Spacecraft | Kind::Satellites | Kind::Small) {
                         self.display.ui(ui);
                     }
@@ -433,6 +486,7 @@ mod tests {
                 _ => {}
             }
             match c.locate(i, &sky, crate::J2000).unwrap() {
+                Position::Planet(id) => assert!(id < 11),
                 Position::Sky(p, _) => assert!(p[0].is_finite() && p[1].is_finite()),
                 Position::Solar(p, _) => {
                     let Position::Solar(next, _) = c.locate(i, &sky, crate::J2000 + 1.).unwrap()

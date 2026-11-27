@@ -1,11 +1,12 @@
 use super::{Kind, Position};
 use crate::catalog::SkyData;
 use mitaka_core::{
-    catalog::load_constellations,
+    catalog::{load_constellations, load_hipparcos},
     extended_catalog::{load_ngc, load_sdss, load_star_names, SdssKind, SdssRecord},
     small_body,
 };
-use std::{io, path::Path};
+use std::{collections::HashMap, io, path::Path, sync::Arc};
+use unicode_normalization::UnicodeNormalization;
 
 pub(super) fn name(bytes: &[u8]) -> String {
     let bytes = bytes.trim_ascii();
@@ -26,7 +27,10 @@ struct Entry {
 }
 impl Entry {
     fn new(label: String, source: String, target: Key) -> Self {
-        let key = normalize(&format!("{label} {source}"));
+        let key = match &target {
+            Key::Hip(_) | Key::Planet(_) | Key::Nebula(_) | Key::Sky(_) => normalize(&label),
+            _ => normalize(&format!("{label} {source}")),
+        };
         Self {
             label,
             source,
@@ -36,7 +40,8 @@ impl Entry {
     }
 }
 fn normalize(s: &str) -> String {
-    s.chars()
+    s.nfkd()
+        .filter(|c| !unicode_normalization::char::is_combining_mark(*c))
         .filter(|c| !c.is_whitespace())
         .flat_map(char::to_lowercase)
         .collect()
@@ -44,6 +49,7 @@ fn normalize(s: &str) -> String {
 
 enum Key {
     Hip(i32),
+    Planet(usize),
     Sky([f64; 2]),
     Nebula(mitaka_core::extended_catalog::NgcRecord),
     Small(usize, usize),
@@ -59,7 +65,7 @@ enum Store {
 }
 pub(super) struct Catalog {
     pub(super) sources: std::collections::BTreeMap<usize, super::selections::Source>,
-    rows: Vec<Entry>,
+    rows: Arc<[Entry]>,
     store: Store,
     pub warnings: Vec<String>,
     paths: std::cell::RefCell<PathCache>,
@@ -76,24 +82,140 @@ struct Positions {
     jd: Option<f64>,
     positions: std::collections::HashMap<usize, Option<[f64; 3]>>,
 }
+pub(super) struct SearchRows {
+    pub kind: Kind,
+    rows: Arc<[Entry]>,
+    pub total: usize,
+}
+impl SearchRows {
+    pub(super) fn words(query: &str) -> Vec<String> {
+        let mut words = Vec::new();
+        for word in query
+            .split_whitespace()
+            .map(normalize)
+            .filter(|s| !s.is_empty())
+        {
+            let prefix = ["hip", "ngc", "ic"].into_iter().find(|p| {
+                word.strip_prefix(p)
+                    .is_some_and(|s| s.as_bytes().first().is_some_and(u8::is_ascii_digit))
+            });
+            if let Some(prefix) = prefix {
+                words.push(prefix.to_owned());
+                words.push(word[prefix.len()..].to_owned());
+            } else {
+                words.push(word);
+            }
+        }
+        words
+    }
+
+    pub(super) fn remaining_words<'a>(&self, words: &'a [String]) -> Option<Vec<&'a str>> {
+        let group = match self.kind {
+            Kind::Stars => "hip 恒星 star",
+            Kind::Planets => "太陽系 planet",
+            Kind::Constellations => "星座 constellation",
+            Kind::Ngc => "星雲 星団 nebula",
+            Kind::Galaxies => "sdssgal sdss_gal.dat 銀河 galaxy",
+            Kind::Quasars => "sdssqso sdss_qso.dat クエーサー quasar",
+            _ => "",
+        };
+        let mut remaining = Vec::new();
+        for word in words {
+            if group.contains(word) {
+                continue;
+            }
+            if matches!(self.kind, Kind::Galaxies | Kind::Quasars)
+                && !word
+                    .trim_start_matches('#')
+                    .bytes()
+                    .all(|b| b.is_ascii_digit())
+            {
+                return None;
+            }
+            remaining.push(word.as_str());
+        }
+        Some(remaining)
+    }
+    pub(super) fn matches(&self, index: usize, words: &[&str]) -> bool {
+        if let Some(row) = self.rows.get(index) {
+            return words.iter().all(|&w| row.key.contains(w));
+        }
+        // SDSSの検索対象は元ファイルでの通し番号。識別子を全件分常駐させない。
+        let numbered = (index + 1).to_string();
+        words.iter().all(|&w| {
+            w.strip_prefix('#')
+                .map_or_else(|| numbered.contains(w), |n| n == numbered)
+        })
+    }
+}
 impl Catalog {
     pub(super) fn load(kind: Kind, root: &Path) -> io::Result<Self> {
+        Self::load_with_stars(kind, root, None)
+    }
+    pub(super) fn load_with_stars(
+        kind: Kind,
+        root: &Path,
+        stars: Option<&[mitaka_core::catalog::Star]>,
+    ) -> io::Result<Self> {
         let mut sources = std::collections::BTreeMap::new();
         let mut rows = Vec::new();
         let mut warnings = Vec::new();
         let store = match kind {
-            Kind::Stars => {
-                let file = "star_names_HIP.dat";
-                for s in load_star_names(&root.join(file))? {
+            Kind::Planets => {
+                for (id, english) in [
+                    "Sun", "Mercury", "Venus", "Earth", "Mars", "Jupiter", "Saturn", "Uranus",
+                    "Neptune", "Pluto", "Moon",
+                ]
+                .into_iter()
+                .enumerate()
+                {
                     rows.push(Entry::new(
+                        format!("{} · {english}", crate::solar::NAMES[id]),
+                        "太陽系 planet".into(),
+                        Key::Planet(id),
+                    ));
+                }
+                Store::Static
+            }
+            Kind::Stars => {
+                let names = match load_star_names(&root.join("star_names_HIP.dat")) {
+                    Ok(names) => names
+                        .into_iter()
+                        .map(|s| (s.hip, s))
+                        .collect::<HashMap<_, _>>(),
+                    Err(e) => {
+                        if e.kind() != io::ErrorKind::NotFound {
+                            warnings.push(e.to_string());
+                        }
+                        HashMap::new()
+                    }
+                };
+                let on_disk;
+                let stars = match stars {
+                    Some(stars) => stars,
+                    None => {
+                        on_disk = load_hipparcos(&root.join("hip.dat"))?;
+                        &on_disk
+                    }
+                };
+                for star in stars {
+                    let mut label = format!("HIP {}", star.hip);
+                    if let Some(s) = names.get(&star.hip) {
+                        for alias in [&s.name_bytes, &s.localized_name_bytes] {
+                            let alias = name(alias);
+                            if !alias.is_empty() && alias != "*" {
+                                label.push_str(" · ");
+                                label.push_str(&alias);
+                            }
+                        }
+                    }
+                    rows.push(Entry::new(
+                        label,
                         format!(
-                            "{}　{}　HIP {}",
-                            name(&s.name_bytes),
-                            name(&s.localized_name_bytes),
-                            s.hip
+                            "hip.dat · 記録 {} · V {:.2}",
+                            star.source_row, star.magnitude
                         ),
-                        format!("{file} · 行 {}", s.source_row),
-                        Key::Hip(s.hip),
+                        Key::Hip(star.hip),
                     ));
                 }
                 Store::Static
@@ -227,12 +349,19 @@ impl Catalog {
         };
         Ok(Self {
             sources,
-            rows,
+            rows: rows.into(),
             store,
             warnings,
             paths: Default::default(),
             positions: Default::default(),
         })
+    }
+    pub(super) fn search_rows(&self, kind: Kind) -> SearchRows {
+        SearchRows {
+            kind,
+            rows: self.rows.clone(),
+            total: self.len(),
+        }
     }
     pub(super) fn group(&self, i: usize) -> Option<usize> {
         match (&self.store, &self.rows.get(i)?.target) {
@@ -496,6 +625,7 @@ impl Catalog {
             .get(i)
             .ok_or_else(|| error("記録が見つかりません"))?;
         match (&self.store, &row.target) {
+            (_, Key::Planet(id)) => Ok(Position::Planet(*id)),
             (_, Key::Hip(hip)) => {
                 let s = sky
                     .by_hip
@@ -525,7 +655,7 @@ mod tests {
         let c = Catalog {
             paths: Default::default(),
             positions: Default::default(),
-            rows: vec![],
+            rows: Arc::default(),
             sources: Default::default(),
             store: Store::Sdss(
                 "SDSS_GAL.dat",
