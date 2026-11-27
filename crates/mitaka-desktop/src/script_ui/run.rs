@@ -162,24 +162,30 @@ fn listen(
 impl Run {
     pub fn start(
         script: PathBuf,
+        console: bool,
         working_dir: PathBuf,
         temp: TempDir,
         ctx: &eframe::egui::Context,
     ) -> io::Result<Self> {
         let mut helper = env::current_exe()?;
         helper.set_file_name(format!("mitaka-script{}", env::consts::EXE_SUFFIX));
-        Self::start_with(&helper, script, working_dir, temp, ctx)
+        Self::start_with(&helper, script, console, working_dir, temp, ctx)
     }
 
     fn start_with(
         helper: &Path,
         script: PathBuf,
+        console: bool,
         working_dir: PathBuf,
         temp: TempDir,
         ctx: &eframe::egui::Context,
     ) -> io::Result<Self> {
         let (addr, listener) = endpoint(temp.path())?;
-        let child = Command::new(helper)
+        let mut cmd = Command::new(helper);
+        if console {
+            cmd.arg("--console");
+        }
+        let child = cmd
             .arg("--host")
             .arg(addr)
             .arg("--working-dir")
@@ -251,6 +257,7 @@ print("completed")"#,
         let job = Run::start_with(
             &helper,
             script,
+            false,
             work.path().to_owned(),
             scratch().unwrap(),
             &Default::default(),

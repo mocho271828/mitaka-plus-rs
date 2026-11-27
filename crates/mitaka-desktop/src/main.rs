@@ -116,6 +116,7 @@ struct App {
     search: bool,
     settings: bool,
     info: bool,
+    about: bool,
     search_message: String,
     error: Option<String>,
     utc: String,
@@ -159,6 +160,7 @@ impl App {
             search: false,
             settings: false,
             info: false,
+            about: false,
             search_message: String::new(),
             error,
             utc: utc.format("%Y-%m-%d %H:%M:%S").to_string(),
@@ -209,6 +211,10 @@ impl App {
         match command {
             Command::Open => self.open(),
             Command::Media => self.media.choose(ctx),
+            Command::Fullscreen => ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(
+                !ctx.input(|i| i.viewport().fullscreen.unwrap_or(false)),
+            )),
+            Command::About => self.about = true,
             Command::RunScript => self.script_file(ctx),
             Command::ScriptPanel => self.scripts.panel = true,
             Command::LocalHtml => self.open_script_html(),
@@ -387,6 +393,15 @@ impl App {
         }
     }
     fn panels(&mut self, ctx: &egui::Context) {
+        egui::Window::new("Mitaka Plus RS について")
+            .open(&mut self.about)
+            .show(ctx, |ui| {
+                ui.heading(concat!("Mitaka Plus RS ", env!("CARGO_PKG_VERSION")));
+                ui.label(
+                    "国立天文台4D2UプロジェクトのMitakaとMitaka Plusをもとにした非公式Rust移植版。",
+                );
+                ui.label("天文データ・画像の権利は各制作者に帰属します。");
+            });
         self.object_panels(ctx);
         self.solar.panel(ctx);
         if let Some(g) = &mut self.galaxies {
