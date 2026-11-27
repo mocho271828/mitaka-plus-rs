@@ -1,7 +1,8 @@
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path};
 fn main() {
-    let sums = include_str!("../mitaka-media-web/SHA256SUMS");
+    let sums =
+        fs::read_to_string("../mitaka-media-web/SHA256SUMS").expect("media binding manifest");
     println!("cargo:rerun-if-changed=../mitaka-media-web/SHA256SUMS");
     for line in sums.lines() {
         let (hash, name) = line.split_once("  ").expect("SHA256SUMS format");
