@@ -2,7 +2,7 @@
 
 恒星と惑星の位置を指定日時で計算し、地球の空から太陽系・銀河まで探索できる非公式デスクトップアプリです。天文計算、画面、入力処理、Luaホストとメディア操作をRustで実装しています。対象はmacOS 13以降（Apple Silicon・Intel）、Windows 11 x64、Ubuntu 24.04 x64（Wayland・X11）です。
 
-比較基準は既存macOS版のコミット [f9fe624](https://github.com/mocho271828/Mitaka_plus/tree/f9fe62485ad45a3b5651e050a49871a71b6f351d) です。Rust版の取得先は [main](https://github.com/mocho271828/mitaka-plus-rs/tree/main) です。[移植範囲と検証](docs/COMPATIBILITY.md)・[初回移植の統合履歴](docs/STACK.md)
+比較基準は既存macOS版のコミット [f9fe624](https://github.com/mocho271828/Mitaka_plus/tree/f9fe62485ad45a3b5651e050a49871a71b6f351d) です。Rust版の取得先は [main](https://github.com/mocho271828/mitaka-plus-rs/tree/main) です。[移植範囲と検証](docs/COMPATIBILITY.md)・[初回移植の統合履歴](docs/STACK.md)・[旧macOS版との差分解消計画とPR](docs/MACOS_PARITY_PLAN.md)
 
 ## 配布物から起動する
 
