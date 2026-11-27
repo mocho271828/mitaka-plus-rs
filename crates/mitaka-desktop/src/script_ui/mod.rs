@@ -120,29 +120,11 @@ impl App {
     fn script_message(&mut self, msg: &Value) -> Result<Value, String> {
         match msg["op"].as_str() {
             Some("snapshot") => Ok(
-                json!({"ok":true,"jd":self.jd,"lines":self.options.lines,"labels":self.options.labels}),
+                json!({"ok":true,"jd":self.jd,"lines":self.options.lines,"labels":self.options.labels,"timeSpeed":self.playback.plus_speed,"timeStepValue":self.playback.plus_value,"timeStep":self.playback.plus_step,"timeInfo":self.playback.show,"realtime":self.playback.realtime}),
             ),
             Some("apply") => {
                 match msg["kind"].as_u64() {
-                    Some(0) => {
-                        let jd = msg["number"]
-                            .as_f64()
-                            .filter(|v| v.is_finite())
-                            .ok_or("JD が不正です")?;
-                        let valid_date =
-                            (0. ..=5373484.499999).contains(&jd) && super::utc_date(jd).is_some();
-                        let valid_data = self.data.as_ref().is_none_or(|data| {
-                            (0..data.ephemeris.planet_count()).all(|i| {
-                                data.ephemeris
-                                    .time_range(i)
-                                    .is_ok_and(|r| (r[0]..=r[1]).contains(&jd))
-                            })
-                        });
-                        if !valid_date || !valid_data {
-                            return Err("暦表または日時の範囲外です".into());
-                        }
-                        self.set_date(jd);
-                    }
+                    Some(kind @ (0 | 2 | 19 | 20 | 72..=78)) => self.time_action(kind, msg)?,
                     Some(5) => {
                         self.options.lines = msg["enabled"].as_bool().ok_or("lines は真偽値です")?
                     }

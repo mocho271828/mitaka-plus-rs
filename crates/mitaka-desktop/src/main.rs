@@ -4,6 +4,7 @@ mod chart;
 mod commands;
 mod fonts;
 mod galaxies;
+mod playback;
 mod projection;
 mod script_ui;
 mod session;
@@ -90,6 +91,7 @@ impl Args {
 }
 struct App {
     scripts: script_ui::Scripts,
+    playback: playback::Playback,
     session: session::Session,
     data: Option<SkyData>,
     solar: solar::Solar,
@@ -131,6 +133,7 @@ impl App {
         Ok(Self {
             data: initial,
             scripts: Default::default(),
+            playback: Default::default(),
             session: Default::default(),
             solar: Default::default(),
             surface: None,
@@ -164,13 +167,9 @@ impl App {
         }
     }
     fn set_date(&mut self, jd: f64) {
-        if let Err(error) = update_observation_date(
-            &mut self.jd,
-            &mut self.utc,
-            jd,
-            self.data.as_ref().map(|data| data.date_range),
-        ) {
-            self.error = Some(error.into());
+        match self.apply_date(jd) {
+            Ok(()) => self.playback.stop(),
+            Err(e) => self.error = Some(e),
         }
     }
     fn open(&mut self) {
@@ -182,7 +181,9 @@ impl App {
                 Ok(data) => {
                     let jd = data.initial_date(self.jd);
                     self.data = Some(data);
-                    self.set_date(jd);
+                    if jd != self.jd {
+                        self.set_date(jd);
+                    }
                     self.solar = Default::default();
                     self.surface = None;
                     self.galaxies = None;
@@ -386,6 +387,7 @@ impl App {
                     ui.label(format!("JD {:.6}", self.jd));
                 });
                 ui.separator();
+                self.clock_controls(ui);
                 ui.add(egui::Slider::new(&mut self.latitude, -90. ..=90.).text("緯度 °"));
                 ui.add(egui::Slider::new(&mut self.longitude, -180. ..=180.).text("東経 °"));
                 ui.add(
@@ -522,6 +524,7 @@ impl App {
 }
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+        self.clock_frame(ctx);
         self.scripts_frame(ctx);
         for command in self.menus.poll(ctx) {
             self.execute(command, ctx);
@@ -536,6 +539,20 @@ impl eframe::App for App {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(Color32::from_rgb(6, 11, 18)))
             .show(ctx, |ui| self.canvas(ui));
+        if self.playback.show && self.data.is_some() {
+            egui::Area::new("current date".into())
+                .anchor(egui::Align2::LEFT_BOTTOM, [8., -8.])
+                .interactable(false)
+                .show(ctx, |ui| {
+                    if let Some(date) = utc_date(self.jd) {
+                        ui.label(
+                            egui::RichText::new(date.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                                .background_color(Color32::BLACK)
+                                .color(Color32::WHITE),
+                        );
+                    }
+                });
+        }
         self.capture_frame(ctx);
         if self.capture.is_none() {
             self.panels(ctx);
