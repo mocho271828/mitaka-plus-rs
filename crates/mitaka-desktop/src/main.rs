@@ -300,8 +300,7 @@ impl App {
                     View::Horizon => 3,
                     View::Surface => self.surface.as_ref().map_or(3, |s| s.body),
                     _ => {
-                        self.error =
-                            Some("地平図または太陽系で地球・火星を選択してください".into());
+                        self.error = Some("地平図または太陽系で惑星・月を選択してください".into());
                         return;
                     }
                 };
@@ -312,12 +311,13 @@ impl App {
                 } else {
                     (self.latitude, self.longitude)
                 };
-                let result = (|| -> std::io::Result<()> {
-                    if body != 3 && body != 4 {
-                        return Err(std::io::Error::other(
-                            "地形の離着陸は地球と火星で利用できます",
-                        ));
+                if !matches!(body, 3 | 4) {
+                    if let Err(e) = self.nonterrain_mode(ascend, 3., false) {
+                        self.error = Some(e.to_string());
                     }
+                    return;
+                }
+                let result = (|| -> std::io::Result<()> {
                     let ground = surface::Surface::load_mode(
                         &data.root,
                         body,
@@ -658,14 +658,15 @@ impl App {
         }
         if self.view == View::Solar {
             let data = self.data.as_ref().unwrap();
-            if let Err(e) = self.solar.draw(
-                ui,
-                &data.ephemeris,
-                self.jd,
-                &data.root,
-                self.picking,
-                &self.options.layers,
-            ) {
+            let view = solar::ViewSettings {
+                data,
+                jd: self.jd,
+                picking: self.picking,
+                layers: &self.options.layers,
+                surface_site: self.motion.site.as_mut(),
+                observer: [self.latitude, self.longitude],
+            };
+            if let Err(e) = self.solar.draw(ui, view) {
                 ui.label(e.to_string());
             }
             self.object_in_solar(ui);

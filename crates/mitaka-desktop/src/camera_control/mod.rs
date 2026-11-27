@@ -1,5 +1,7 @@
 mod galaxy_targets;
+mod navigation;
 mod orientation;
+mod places;
 pub(crate) mod session;
 mod target;
 use crate::{commands::Command, projection::View, App};
@@ -85,6 +87,10 @@ pub(crate) struct State {
     horizon_fov: Option<(f64, f64)>,
     turn: Option<Turn>,
     target: Option<target::Tracking>,
+    place: Option<places::Move>,
+    place_name: Option<String>,
+    physical_flight: Option<navigation::Flight>,
+    free_physical: bool,
     pub(crate) site: Option<session::Site>,
 }
 impl Default for State {
@@ -102,6 +108,10 @@ impl Default for State {
             horizon_fov: None,
             turn: None,
             target: None,
+            place: None,
+            place_name: None,
+            physical_flight: None,
+            free_physical: false,
             site: None,
         }
     }
@@ -144,7 +154,33 @@ impl App {
     }
     fn set_orientation(&mut self, q: DQuat) {
         match self.view {
-            View::Solar => orientation::apply_solar(&mut self.solar.camera, q),
+            View::Solar => {
+                if let Some(s) = self
+                    .motion
+                    .site
+                    .as_mut()
+                    .filter(|s| s.height <= 0.002000001)
+                {
+                    if let Ok(local) = orientation::body_site(s.body, s.lat, s.lon, self.jd) {
+                        let mut camera = crate::projection::Camera {
+                            longitude: s.heading,
+                            latitude: s.elevation,
+                            roll: s.roll,
+                            ..Default::default()
+                        };
+                        orientation::apply_horizon(&mut camera, local, q);
+                        s.heading = camera.longitude;
+                        s.elevation = camera.latitude;
+                        s.roll = camera.roll;
+                        s.last = None;
+                        if let Some(center) = self.solar.body_point(s.body) {
+                            let _ = s.pose(center.into(), self.jd, &mut self.solar.camera);
+                        }
+                    }
+                } else {
+                    orientation::apply_solar(&mut self.solar.camera, q);
+                }
+            }
             View::Horizon => {
                 if let Ok(local) = orientation::site(self.latitude, self.longitude, self.jd) {
                     orientation::apply_horizon(&mut self.horizon, local, q)
@@ -171,17 +207,28 @@ impl App {
             View::Solar if self.solar.selected == 3 => Some(self.horizon_fov()),
             _ => None,
         };
-        let state = json!({"azimuth":signed(self.horizon.longitude),"altitude":self.horizon.latitude,
+        let site = self
+            .motion
+            .site
+            .filter(|s| self.view == View::Solar && s.height <= 0.002000001);
+        let state = json!({"azimuth":signed(site.map_or(self.horizon.longitude,|s|s.heading)),"altitude":site.map_or(self.horizon.latitude,|s|s.elevation),
              "distance":self.solar.camera.distance,"cameraDuration":self.motion.duration,"cameraModeDuration":self.motion.mode_duration,
              "cameraMode":match self.view{View::Horizon|View::Surface=>Some(0),View::Solar=>Some(if self.motion.site.as_ref().is_some_and(|s|s.height<=0.002000001){0}else{1}),_=>None},
              "cameraZoomMode":self.motion.zoom_mode,"cameraFov":fov,"cameraOrientation":q.map(|q|q.to_array()),
-             "cameraEuler":q.map(orientation::euler),"target":self.motion.target.as_ref().map(|t|t.name.as_str()).unwrap_or(target::NAMES[self.solar.selected])});
+             "cameraEuler":q.map(orientation::euler),"target":self.motion.target.as_ref().map(|t|t.name.as_str()).or(self.motion.place_name.as_deref()).unwrap_or(target::NAMES[self.solar.selected])});
         msg.as_object_mut()
             .unwrap()
             .extend(state.as_object().unwrap().clone());
         msg
     }
     pub(crate) fn camera_frame(&mut self, ctx: &egui::Context) {
+        let now = Instant::now();
+        if let Err(e) = self.tick_place(now) {
+            self.error = Some(e.to_string());
+        }
+        if let Err(e) = self.tick_reference_flight(now) {
+            self.error = Some(e.to_string());
+        }
         if let Some(mut site) = self.motion.site.take() {
             if let Err(e) = site.advance(self) {
                 self.error = Some(e.to_string());
@@ -189,8 +236,29 @@ impl App {
                 self.motion.site = Some(site);
             }
         }
-        let now = Instant::now();
-        if self.view == View::Horizon {
+        if let Some(s) = self
+            .motion
+            .site
+            .as_mut()
+            .filter(|s| self.view == View::Solar && s.height <= 0.002000001)
+        {
+            if let Some(v) = tick(&mut self.motion.az, now) {
+                s.heading = v.rem_euclid(360.);
+                s.last = None;
+            }
+            if let Some(v) = tick(&mut self.motion.alt, now) {
+                s.elevation = v;
+                s.last = None;
+            }
+            if s.last.is_none() {
+                if let Some(center) = self.solar.body_point(s.body) {
+                    if let Err(e) = s.pose(center.into(), self.jd, &mut self.solar.camera) {
+                        self.error = Some(e.to_string());
+                    }
+                    s.last = Some(self.jd);
+                }
+            }
+        } else if self.view == View::Horizon {
             if let Some(v) = tick(&mut self.motion.az, now) {
                 self.horizon.longitude = v.rem_euclid(360.)
             }
@@ -237,7 +305,9 @@ impl App {
             }
         }
         let m = &self.motion;
-        if m.az.is_some()
+        if m.place.is_some()
+            || m.physical_flight.is_some()
+            || m.az.is_some()
             || m.alt.is_some()
             || m.zoom.is_some()
             || m.fov.is_some()
@@ -283,13 +353,19 @@ impl App {
                 if !az && !(-90. ..=90.).contains(&n) {
                     return Err("仰角は−90から90度です".into());
                 }
-                self.view = View::Horizon;
+                let site = self
+                    .motion
+                    .site
+                    .filter(|s| self.view == View::Solar && s.height <= 0.002000001);
+                if site.is_none() {
+                    self.view = View::Horizon;
+                }
                 self.motion.turn = None;
                 self.motion.target = None;
                 let a = if az {
-                    self.horizon.longitude
+                    site.map_or(self.horizon.longitude, |s| s.heading)
                 } else {
-                    self.horizon.latitude
+                    site.map_or(self.horizon.latitude, |s| s.elevation)
                 };
                 let b = if az { a + signed(n - a) } else { n };
                 let anim = Some(Scalar {
@@ -385,12 +461,18 @@ impl App {
                     return Err("全天図ではモードを切り替えられません".into());
                 }
                 let ascend = n == 1.;
-                if (ascend && self.view != View::Solar) || (!ascend && self.view != View::Horizon) {
+                if self.view == View::Solar && self.solar.selected != 3 && self.solar.selected != 4
+                {
+                    self.nonterrain_mode(ascend, time.seconds, time.smooth)
+                        .map_err(|e| e.to_string())?;
+                } else if (ascend && self.view != View::Solar)
+                    || (!ascend && self.view != View::Horizon)
+                {
                     if self.view == View::Sky {
                         self.view = if ascend { View::Horizon } else { View::Solar };
                         self.solar.selected = 3;
                     }
-                    if self.view == View::Solar && self.solar.selected != 3 {
+                    if self.view == View::Solar && !matches!(self.solar.selected, 3 | 4) {
                         return Err("このモードの切替は地球で利用できます".into());
                     }
                     self.error = None;
