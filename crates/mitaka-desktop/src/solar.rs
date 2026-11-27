@@ -376,6 +376,27 @@ impl Solar {
         };
         self.tracking = Tracking::EarthMoon { following: true };
     }
+    /// SolarSystemView.mm の keepCameraOutsideBodies。視線を保ったまま地表から離す。
+    pub(crate) fn keep_earth_moon_camera_outside_bodies(&mut self) {
+        if !self.tracking.earth_moon() {
+            return;
+        }
+        let Some(scene) = &self.scene else {
+            return;
+        };
+        let outward = self.camera.basis()[2];
+        for body in [3, 10] {
+            let radius = (RADII_KM[body] + 0.002) / KM_PER_AU;
+            let offset = scale(self.camera.relative_au(scene.bodies[body]), -1.);
+            let eye = plus(offset, scale(outward, self.camera.distance));
+            if dot(eye, eye) <= radius * radius {
+                let along = dot(offset, outward);
+                let discriminant = along * along - dot(offset, offset) + radius * radius;
+                self.camera.distance = -along + discriminant.max(0.).sqrt() + 1e-10;
+            }
+        }
+    }
+
     pub fn approach(&mut self, body: usize) -> io::Result<()> {
         let scene = self
             .scene
@@ -655,6 +676,7 @@ impl Solar {
         if self.tick_surface(jd)? {
             ui.ctx().request_repaint();
         }
+        self.keep_earth_moon_camera_outside_bodies();
         let scene = self
             .scene
             .as_ref()
@@ -959,6 +981,38 @@ mod tests {
         assert!(!solar.tracking.earth_moon());
     }
 
+    #[test]
+    fn earth_moon_zoom_and_orbit_keep_eye_above_both_surfaces() {
+        let mut bodies = [[0.; 3]; 11];
+        bodies[3] = [-0.0013, 0., 0.];
+        bodies[10] = [0.0013, 0., 0.];
+        let mut solar = Solar {
+            scene: Some(Scene {
+                jd: crate::J2000,
+                bodies,
+                orbits: vec![],
+                jupiter_casters: vec![],
+                eclipse_warnings: vec![],
+                satellite_positions_checked: true,
+            }),
+            ..Default::default()
+        };
+        solar.show_earth_moon(bodies[3], bodies[10]);
+        let initial = solar.camera.distance;
+        solar.keep_earth_moon_camera_outside_bodies();
+        assert_eq!(solar.camera.distance, initial);
+        for (body, yaw) in [(3, 180.), (10, 0.)] {
+            solar.camera.pitch = 0.;
+            solar.camera.yaw = yaw;
+            // 中点から天体中心までの距離では、ズーム下限0.0002 AUを超えていても衝突する。
+            solar.camera.distance = 0.0013;
+            solar.keep_earth_moon_camera_outside_bodies();
+            let height = (solar.camera.distance - 0.0013) * KM_PER_AU - RADII_KM[body];
+            assert!((0.002..0.02).contains(&height), "{body} height={height} km");
+            assert_eq!(solar.camera.target, [0.; 3]);
+            assert_eq!(solar.camera.yaw, yaw);
+        }
+    }
     #[test]
     #[ignore = "利用者の CF96 暦表"]
     fn earth_moon_camera_tracks_the_pair_across_dates() {
