@@ -9,4 +9,6 @@ pub mod extended_catalog;
 pub mod galaxy;
 pub mod lunar;
 pub mod orbit;
+pub mod satellite;
+pub mod satellite_catalog;
 pub mod terrain;
