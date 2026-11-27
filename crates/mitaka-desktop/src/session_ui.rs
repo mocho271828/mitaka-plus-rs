@@ -1,4 +1,5 @@
 use crate::{
+    preferences::Preferences,
     projection::{Camera, View},
     session::Session,
     App,
@@ -200,6 +201,9 @@ impl App {
         p.plus_value = num(&v["plus_time"], "value_days");
         p.rate = num(v, "simulation_rate");
         self.session = state;
+        if let Preferences::Pending(path, _) = &self.preferences {
+            self.preferences = Preferences::Ready(path.clone());
+        }
         Ok(())
     }
     pub(super) fn apply_display_settings(&mut self, v: &Value, display: DisplayLayers) {
