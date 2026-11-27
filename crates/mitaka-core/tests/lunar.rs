@@ -5,9 +5,23 @@ use mitaka_core::{
 fn max_abs(a: [f64; 3], b: [f64; 3]) -> f64 {
     a.into_iter()
         .zip(b)
-        .map(|(a, b)| (a - b).abs())
+        .map(|(a, b)| {
+            let difference = (a - b).abs();
+            assert!(
+                difference.is_finite(),
+                "non-finite lunar reference difference: {a} vs {b}"
+            );
+            difference
+        })
         .fold(0., f64::max)
 }
+
+#[test]
+#[should_panic(expected = "non-finite lunar reference difference")]
+fn reference_comparison_rejects_a_nan_component() {
+    max_abs([1., f64::NAN, 2.], [1., 0., 2.]);
+}
+
 #[test]
 #[allow(
     clippy::excessive_precision,
