@@ -342,6 +342,9 @@ impl App {
                 self.motion.target = Some(tr);
             }
         }
+        if self.view == View::Solar {
+            self.solar.keep_earth_moon_camera_outside_bodies();
+        }
         let m = &self.motion;
         if m.place.is_some()
             || m.journey.flight.is_some()
