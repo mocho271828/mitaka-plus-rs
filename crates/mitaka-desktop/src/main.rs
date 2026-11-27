@@ -386,7 +386,13 @@ impl App {
         }
         let image = ctx.input(|i| {
             i.events.iter().find_map(|e| {
-                if let egui::Event::Screenshot { image, .. } = e {
+                if let egui::Event::Screenshot {
+                    viewport_id, image, ..
+                } = e
+                {
+                    if *viewport_id != egui::ViewportId::ROOT {
+                        return None;
+                    }
                     Some(image.clone())
                 } else {
                     None

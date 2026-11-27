@@ -9,6 +9,38 @@ use std::{
     time::{Duration, Instant},
 };
 
+fn check_date_limits(app: &mut App) -> io::Result<()> {
+    fn reject_next_to(app: &mut App, valid: f64, invalid: f64) -> io::Result<()> {
+        app.apply_date(valid).map_err(io::Error::other)?;
+        let utc = app.utc.clone();
+        app.set_date(invalid);
+        if app.error.take().is_none() || app.jd != valid || app.utc != utc {
+            return Err(io::Error::other(format!(
+                "範囲外の日時 {invalid} を指定した後に {valid} と {utc} を保持できません"
+            )));
+        }
+        Ok(())
+    }
+
+    let initial = app.jd;
+    let last = super::parse_utc("9999-12-31 23:59:59")
+        .ok_or_else(|| io::Error::other("暦の上限を変換できません"))?;
+    let data = app.data.take();
+    let original_error = app.error.take();
+    let calendar = reject_next_to(app, last, last + 1.);
+    app.data = data;
+    calendar?;
+    let [first, last] = app
+        .data
+        .as_ref()
+        .ok_or_else(|| io::Error::other("暦表が必要です"))?
+        .date_range;
+    reject_next_to(app, first, first - 1.)?;
+    reject_next_to(app, last, last + 1.)?;
+    app.error = original_error;
+    app.apply_date(initial).map_err(io::Error::other)
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Scene {
     Sky,
@@ -81,6 +113,7 @@ impl Smoke {
             .ok_or_else(|| io::Error::other("データをロードできません"))?;
         match scene {
             Scene::Sky => {
+                check_date_limits(app)?;
                 app.view = View::Sky;
                 app.projector.open = true;
                 app.projector.probe = true;
@@ -95,6 +128,20 @@ impl Smoke {
                 app.view = View::Solar;
             }
             Scene::GlobeEarth | Scene::GlobeMars => {
+                let texture = if scene == Scene::GlobeEarth {
+                    "earth.jpg"
+                } else {
+                    "mars.jpg"
+                };
+                if !data
+                    .root
+                    .with_file_name("textures")
+                    .join(texture)
+                    .try_exists()?
+                {
+                    eprintln!("SKIP {} ({texture} がありません)", scene.name());
+                    return Ok(false);
+                }
                 let body = if scene == Scene::GlobeEarth { 3 } else { 4 };
                 app.solar.prepare(&data.ephemeris, app.jd)?;
                 app.solar.approach(body)?;
@@ -163,7 +210,10 @@ impl Smoke {
             }
             return Ok(false);
         }
-        if scene == Scene::Sky && !app.projector.verified() {
+        if scene == Scene::Sky && app.projector.open {
+            if app.projector.verified() {
+                app.projector.open = false;
+            }
             return Ok(false);
         }
         if scene == Scene::Galaxy {

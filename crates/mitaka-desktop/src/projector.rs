@@ -8,6 +8,7 @@ use std::sync::{
 };
 
 pub struct Projector {
+    primary_event: Arc<std::sync::Mutex<Option<egui::Event>>>,
     closed: Arc<AtomicBool>,
     pub open: bool,
     pub controls: bool,
@@ -20,6 +21,7 @@ impl Default for Projector {
     fn default() -> Self {
         Self {
             open: false,
+            primary_event: Default::default(),
             controls: false,
             probe: false,
             verified: Default::default(),
@@ -50,6 +52,9 @@ impl Projector {
             });
     }
     pub fn frame(&mut self, ctx: &Context, layer: LayerId, rect: Rect) {
+        if let Some(event) = self.primary_event.lock().unwrap().take() {
+            ctx.input_mut(|i| i.events.push(event));
+        }
         if self.closed.swap(false, Ordering::Relaxed) {
             self.open = false;
         }
@@ -69,6 +74,7 @@ impl Projector {
         let probe = self.probe && !self.verified();
         let verified = self.verified.clone();
         let closed = self.closed.clone();
+        let forwarded = self.primary_event.clone();
         let gain = self.gain;
         if probe {
             check_capture(ctx, id, &verified);
@@ -80,6 +86,14 @@ impl Projector {
                 .with_title("Mitaka Plus — 投影")
                 .with_inner_size([800., 520.]),
             move |child, class| {
+                // wgpu は先に再描画したウィンドウへスクリーンショットの完了を配信する。
+                // 本体向けの画像を、投影側が先に受け取った場合も本体に引き渡す。
+                let from_root=child.input(|i|i.events.iter().find(|e| matches!(e, egui::Event::Screenshot{viewport_id,..} if *viewport_id==ViewportId::ROOT)).cloned());
+                if let Some(e)=from_root {
+                    *forwarded.lock().unwrap()=Some(e);
+                    child.request_repaint_of(ViewportId::ROOT);
+                }
+
                 if class == egui::ViewportClass::Embedded
                     || child.input(|i| i.viewport().close_requested())
                 {

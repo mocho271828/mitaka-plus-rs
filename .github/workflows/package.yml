@@ -1,5 +1,7 @@
 name: Distribution
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+  workflow_call:
 permissions:
   contents: read
 env:
@@ -14,10 +16,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libx11-xcb-dev libxcb-shape0-dev libxcb-xfixes0-dev libwebkit2gtk-4.1-dev libdbus-1-dev
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libx11-dev libx11-xcb-dev libxcb-shape0-dev libxcb-xfixes0-dev libwebkit2gtk-4.1-dev libdbus-1-dev
       - if: runner.os == 'macOS'
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - run: bash tools/package.sh
+      - name: Open synthetic catalogs from the packaged application
+        shell: bash
+        run: |
+          cargo run --locked -p mitaka-core --example synthetic_chart -- package-test-data
+          case "$RUNNER_OS" in
+            macOS) ditto -x -k dist/*universal.zip "$RUNNER_TEMP/pkg"
+                   app="$RUNNER_TEMP/pkg/Mitaka Plus.app/Contents/MacOS/mitaka-plus" ;;
+            Linux) dpkg-deb -x dist/*.deb "$RUNNER_TEMP/pkg"
+                   app="$RUNNER_TEMP/pkg/usr/bin/mitaka-plus" ;;
+            Windows) 7z x -o"$RUNNER_TEMP/pkg" dist/*x64.zip
+                     app="$RUNNER_TEMP/pkg/mitaka-plus/mitaka-plus.exe" ;;
+          esac
+          "$app" --inspect --data-root package-test-data
       - if: runner.os == 'Linux'
         run: bash tools/offline-source.sh
       - uses: actions/upload-artifact@v4
