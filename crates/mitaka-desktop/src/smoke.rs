@@ -1,4 +1,6 @@
 //! 実ウィンドウからGPU描画結果を読み戻して、各シーンの切替と表示を検査する。
+pub(crate) mod terrain;
+
 use super::{capture, galaxies, projection::View, surface, App};
 use eframe::egui;
 use std::{
@@ -186,6 +188,7 @@ impl Smoke {
             Scene::ReferenceSurface => {
                 app.view = View::Solar;
                 app.solar.prepare(&data.ephemeris, app.jd)?;
+                terrain::check(app, ctx)?;
                 // 基準球でも火星地表からの距離操作と、離陸中の許可条件を検査できる。
                 app.solar.approach(4)?;
                 app.nonterrain_mode(false, 0., true)?;

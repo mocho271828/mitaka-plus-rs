@@ -99,6 +99,30 @@ impl Site {
         })
     }
 }
+impl super::State {
+    pub(crate) fn update_ground(&mut self, surface: &crate::surface::Surface) {
+        let Some(site) = self
+            .site
+            .as_mut()
+            .filter(|s| s.at_location(surface.body, surface.lat, surface.lon))
+        else {
+            return;
+        };
+        let terrain = surface.landing_height_m(RADII_KM[site.body]) / 1000.;
+        if site.terrain == terrain {
+            return;
+        }
+        site.update_terrain(terrain);
+        if let Some(flight) = &mut self.physical_flight {
+            // 原版の update_terrain_offset と同じく、残区間を現在の姿勢から補間する。
+            flight.to.update_terrain(terrain);
+            let elapsed = flight.previous.duration_since(flight.started).as_secs_f64();
+            flight.seconds = (flight.seconds - elapsed).max(0.);
+            flight.started = flight.previous;
+            flight.from = *site;
+        }
+    }
+}
 impl App {
     pub(crate) fn nonterrain_mode(
         &mut self,
@@ -106,18 +130,20 @@ impl App {
         seconds: f64,
         force: bool,
     ) -> io::Result<()> {
-        let body = self.solar.selected;
+        let displayed = self.surface.as_ref().filter(|_| self.view == View::Surface);
+        let body = displayed.map_or(self.solar.selected, |g| g.body);
         if !(1..=10).contains(&body) {
             return Err(io::Error::other("離着陸には惑星または月を選択してください"));
         }
-        if self.motion.physical_flight.is_some() && !force {
+        let flying = displayed.is_none() && self.motion.physical_flight.is_some();
+        if flying && !force {
             return Ok(());
         }
-        let was_ground = self
-            .motion
-            .site
-            .is_some_and(|s| s.body == body && s.height <= GROUND + 1e-9);
-        if self.motion.physical_flight.is_none() && was_ground != ascend {
+        let site = displayed
+            .map(|g| Site::from_surface(g, self.horizon))
+            .or_else(|| self.motion.site.filter(|s| s.body == body));
+        let was_ground = site.is_some_and(|s| s.height <= GROUND + 1e-9);
+        if !flying && was_ground != ascend {
             return Ok(());
         }
         let data = self
@@ -130,12 +156,14 @@ impl App {
                 .body_point(body)
                 .ok_or_else(|| io::Error::other("選択天体の位置がありません"))?,
         );
-        let mut from = if let Some(s) = self.motion.site.filter(|s| s.body == body) {
+        let mut from = if let Some(s) = site {
             s
         } else {
             Site::from_camera(body, center, self.jd, self.solar.camera, force)?
         };
-        if matches!(body, 1 | 10) {
+        if displayed.is_some() {
+            from.pose(center, self.jd, &mut self.solar.camera)?;
+        } else if matches!(body, 1 | 10) {
             let mesh = crate::surface::Surface::load_optional(
                 &data.root,
                 body,
@@ -149,6 +177,7 @@ impl App {
             self.surface = mesh;
         }
         self.solar.stop();
+        self.solar.selected = body;
         self.motion.target = None;
         self.motion.place = None;
         self.motion.place_name = None;
@@ -185,7 +214,7 @@ impl App {
         self.tick_reference_flight(now)?;
         Ok(())
     }
-    pub(super) fn tick_reference_flight(&mut self, now: Instant) -> io::Result<()> {
+    pub(crate) fn tick_reference_flight(&mut self, now: Instant) -> io::Result<()> {
         let Some(mut f) = self.motion.physical_flight.take() else {
             return Ok(());
         };

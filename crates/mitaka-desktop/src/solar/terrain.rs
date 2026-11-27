@@ -365,23 +365,7 @@ mod tests {
                 if supplied == "truncated" {
                     std::fs::write(root.path().join(file), [1u8, 2]).unwrap();
                 } else if supplied == "ready" {
-                    let mut bytes = Vec::new();
-                    for f in [1_f32, (RADII_KM[body] * 1000.) as f32] {
-                        bytes.extend(f.to_le_bytes());
-                    }
-                    for n in [1_i32, 1] {
-                        bytes.extend(n.to_le_bytes());
-                    }
-                    for f in [-2_f32, 2., 2., -2.] {
-                        bytes.extend(f.to_le_bytes());
-                    }
-                    for n in [0_i32, 7, 2, 2] {
-                        bytes.extend(n.to_le_bytes());
-                    }
-                    for _ in 0..25 {
-                        bytes.extend(400_i16.to_le_bytes());
-                    }
-                    std::fs::write(root.path().join(file), bytes).unwrap();
+                    crate::smoke::terrain::write_tile(root.path(), body).unwrap();
                 }
                 let relief = crate::surface::Surface::load_optional(
                     root.path(),
