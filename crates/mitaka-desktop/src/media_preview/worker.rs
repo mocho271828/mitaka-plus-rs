@@ -143,11 +143,13 @@ mod tests {
             writer.write_sample(pcm).unwrap();
         }
         writer.finalize().unwrap();
-        let mut cases = vec![(wav, 96000)];
-        if let Some(path) = std::env::var_os("MITAKA_TEST_MEDIA_VIDEO") {
-            cases.push((path.into(), 90));
-        }
-        for (path, length) in cases {
+        let video = std::env::var_os("MITAKA_TEST_MEDIA_VIDEO")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/seek-15fps.mp4")
+            });
+        for (path, length) in [(wav, 96000), (video, 90)] {
+            eprintln!("testing {} frames from {}", length, path.display());
             let mut w = Worker::launch(Path::new(&exe), File::open(&path).unwrap(), &path).unwrap();
             let wait =
                 |w: &mut Worker, stage: &str, timeout: Duration, done: &dyn Fn(&Value) -> bool| {
@@ -182,7 +184,16 @@ mod tests {
             wait(&mut w, "seek frame", command_timeout, &|s| {
                 s["frame"] == length / 2
             });
-            assert!((w.state["seconds"].as_f64().unwrap() - 3.).abs() < 1e-4);
+            assert_eq!(w.state["playing"], false);
+            assert!(
+                (w.state["seconds"].as_f64().unwrap() - 3.).abs() < 1e-4,
+                "seek result: {}",
+                w.state
+            );
+            eprintln!(
+                "seek verified at frame {} of {}, time {} s",
+                w.state["frame"], length, w.state["seconds"]
+            );
         }
     }
 }

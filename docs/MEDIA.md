@@ -37,4 +37,12 @@ MITAKA_DATA_ROOT=/path/to/resources/data cargo test --locked -p mitaka-desktop n
 MITAKA_TEST_MEDIA_HELPER=/path/to/mitaka-media cargo test --locked -p mitaka-desktop real_player_controls_the_selected_handle -- --ignored
 ```
 
-最後の試験は画面のある環境で6秒の16 kHz PCM WAVを生成します。`MITAKA_TEST_MEDIA_VIDEO` に6秒90フレームの等間隔 MP4 を指定すると動画でも試験します。macOS arm64 の WKWebView では再生・一時停止・3秒へのシーク、PCM 96000フレームとH.264 90フレームを照合しました。3 OS の CI はデバッグ版と展開した配布版のプレーヤーで同じ WAV の再生位置が進み、一時停止し、48000 フレーム目にシークできることを検査します。Ubuntu では Xvfb と PulseAudio の時間同期付き仮想出力を使い、Windows では WebView2 のテストプロセスで Chromium の仮想音声出力を指定します。実スピーカーへの出力、Windows・Ubuntu での動画のフレームシーク、音声装置切断時の挙動は別途実機確認が必要です。
+最後の試験は画面のある環境で6秒の16 kHz PCM WAVを生成し、同梱の合成H.264 MP4（15 fps、6秒・90フレーム）も開きます。両方とも実プレーヤーで再生・一時停止して3秒に移動し、WAVは48,000フレーム目、MP4は45フレーム目が返ることを検査します。`MITAKA_TEST_MEDIA_VIDEO` を指定すると同条件の別の動画を使用できます。macOS arm64のWKWebViewでこの操作を確認しました。UbuntuのCIはXvfbとPulseAudioの仮想出力を使い、WindowsのCIはWebView2のテストプロセスで仮想音声出力を指定します。実スピーカーと再生中の装置切断は実機での確認項目です。
+
+動画の入力はFFmpegの合成パターンです。リポジトリのルートで次のコマンドを使って同条件の動画を生成できます。
+
+```sh
+ffmpeg -f lavfi -i testsrc2=size=64x48:rate=15 -frames:v 90 -an -c:v libx264 \
+  -profile:v baseline -pix_fmt yuv420p -crf 30 -threads 1 -movflags +faststart \
+  -bsf:v filter_units=remove_types=6 -map_metadata -1 crates/mitaka-desktop/tests/fixtures/seek-15fps.mp4
+```
