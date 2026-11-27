@@ -1,10 +1,12 @@
 //! 円筒投影。現行版の sky_model.cpp と同じ左右・上下および度単位を使う。
-const MIN_HORIZON_FOV: f64 = 1e-9;
+pub const MIN_HORIZON_FOV: f64 = 1e-9;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum View {
     Sky,
     Horizon,
+    Solar,
+    Surface,
 }
 
 #[derive(Clone, Copy)]
@@ -12,6 +14,7 @@ pub struct Camera {
     pub longitude: f64,
     pub latitude: f64,
     pub zoom: f64,
+    pub roll: f64,
 }
 impl Default for Camera {
     fn default() -> Self {
@@ -19,6 +22,7 @@ impl Default for Camera {
             longitude: 180.0,
             latitude: 0.0,
             zoom: 1.0,
+            roll: 0.,
         }
     }
 }
@@ -39,6 +43,8 @@ impl Camera {
             let forward = cosine * cd * ct + sine * st;
             let right = cosine * sd;
             let up = sine * ct - cosine * cd * st;
+            let (sr, cr) = self.roll.to_radians().sin_cos();
+            let (right, up) = (right * cr + up * sr, up * cr - right * sr);
             (
                 right.atan2(forward).to_degrees(),
                 up.atan2(forward.hypot(right)).to_degrees(),
@@ -69,15 +75,7 @@ impl Camera {
         self.latitude = latitude;
         self.normalize(view);
     }
-    pub fn zoom_at(&mut self, view: View, factor: f64, anchor: [f64; 2]) {
-        match view {
-            View::Sky => self.zoom_sky_at(factor, anchor),
-            View::Horizon => {
-                self.zoom_horizon_at(180. / self.zoom, factor, anchor);
-            }
-        }
-    }
-    fn zoom_sky_at(&mut self, factor: f64, anchor: [f64; 2]) {
+    pub fn zoom_sky_at(&mut self, factor: f64, anchor: [f64; 2]) {
         let previous = self.zoom;
         self.zoom = (self.zoom * factor).clamp(1., 180.);
         let change = 1. / previous - 1. / self.zoom;
@@ -87,7 +85,7 @@ impl Camera {
     }
 
     /// 描画下限より狭い視野角も表示状態に保存するため、論理上の視野角を返す。
-    fn zoom_horizon_at(&mut self, fov: f64, factor: f64, anchor: [f64; 2]) -> f64 {
+    pub fn zoom_horizon_at(&mut self, fov: f64, factor: f64, anchor: [f64; 2]) -> f64 {
         if factor == 1. {
             return fov;
         }
@@ -102,11 +100,13 @@ impl Camera {
 
         // sky_model.cpp の zoom_horizon と同じく、カーソルの視線を世界座標に戻し、
         // 拡大後の視線をその方向に一致させる方位角・仰角のうち元の姿勢に近い方を選ぶ。
+        let (sr, cr) = self.roll.to_radians().sin_cos();
         let ray = |angle: f64| {
             let [x, y] = anchor.map(|n| n.clamp(0., 1.));
             let (slon, clon) = ((x - 0.5) * 2. * angle).to_radians().sin_cos();
             let (slat, clat) = ((0.5 - y) * angle).to_radians().sin_cos();
-            [clat * clon, clat * slon, slat]
+            let right = clat * slon;
+            [clat * clon, right * cr - slat * sr, right * sr + slat * cr]
         };
         let [forward, right, up] = ray(visible_fov);
         let (st, ct) = self.latitude.to_radians().sin_cos();
@@ -160,6 +160,7 @@ mod tests {
             longitude: 350.,
             latitude: 70.,
             zoom: 1.,
+            roll: 0.,
         };
         near(camera.position(View::Horizon, [350., 70.]), [0.5, 0.5]);
         near(
@@ -168,20 +169,43 @@ mod tests {
         );
     }
     #[test]
+    fn rolled_horizon_matches_plus_raster_pixel_centers() {
+        let c = Camera {
+            longitude: 279.,
+            latitude: -15.,
+            roll: 33.,
+            zoom: 180. / 70.,
+        };
+        // HorizonRasterProjectionの9×5画素レンダーにおける画素中心の方位・高度。
+        for (ax, ay, x, y) in [
+            (212.13943087444915, -7.883517074461757, 0.5, 0.5),
+            (312.2416050357693, 43.218892388640114, 8.5, 0.5),
+            (344.992431004655, -4.34973794127603, 8.5, 4.5),
+        ] {
+            near(c.position(View::Horizon, [ax, ay]), [x / 9., y / 5.]);
+        }
+    }
+    #[test]
     fn sky_zoom_preserves_mouse_anchor_and_wraps_longitude() {
         let mut c = Camera::default();
         let anchor = c.position(View::Sky, [270., 45.]);
-        c.zoom_at(View::Sky, 2., anchor);
+        c.zoom_sky_at(2., anchor);
         near(c.position(View::Sky, [270., 45.]), anchor);
         c.pan(View::Sky, 5., 0.);
         assert!((0. ..360.).contains(&c.longitude));
     }
     #[test]
-    fn horizon_zoom_keeps_tilted_targets_under_the_pointer() {
-        for (latitude, target) in [(70., [110., 55.]), (-70., [110., -55.])] {
+    fn horizon_zoom_keeps_tilted_and_rolled_targets_under_the_pointer() {
+        for (latitude, roll, target) in [
+            (70., 0., [110., 55.]),
+            (-70., 0., [110., -55.]),
+            (50., 37., [110., 55.]),
+            (50., -67., [85., 47.]),
+        ] {
             let mut camera = Camera {
                 longitude: 73.,
                 latitude,
+                roll,
                 zoom: 2.,
             };
             let anchor = camera.position(View::Horizon, target);

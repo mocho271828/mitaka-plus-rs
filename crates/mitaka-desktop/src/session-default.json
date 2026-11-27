@@ -1,0 +1,175 @@
+{
+  "atmosphere" : {
+    "intensity" : 6,
+    "mode" : 2
+  },
+  "constellations" : {
+    "boundaries" : false,
+    "default_visible" : true,
+    "exceptions_base64" : [
+
+    ],
+    "illustrations" : false,
+    "labels" : true,
+    "lines" : true
+  },
+  "earth_layers" : {
+    "city_lights" : false,
+    "clouds" : true
+  },
+  "eclipse" : {
+    "shadow_borders" : false,
+    "shadow_penumbra" : false,
+    "shadow_umbra" : false,
+    "shadows" : true
+  },
+  "grids" : {
+    "circle_scales" : true,
+    "ecliptic" : false,
+    "equatorial" : false,
+    "galactic" : false,
+    "horizontal" : false,
+    "square_scales" : false
+  },
+  "horizon_selected_body" : null,
+  "horizon_viewport" : {
+    "center_altitude_deg" : 0,
+    "center_azimuth_deg" : 180,
+    "fov_deg" : 180,
+    "roll_deg" : 0,
+    "zoom" : 1
+  },
+  "julian_date" : 2451545,
+  "magnitude_limit" : 6.5,
+  "milky_way_mode" : 0,
+  "mode" : 0,
+  "observer_latitude_deg" : 35.68,
+  "observer_longitude_deg" : 139.75999999999999,
+  "observer_place_identifier_base64" : "",
+  "planets" : {
+    "axes" : false,
+    "labels" : true,
+    "orbits" : true,
+    "visible" : true
+  },
+  "plus_time" : {
+    "speed" : 0,
+    "step" : 4,
+    "value_days" : 0.041666666666666664
+  },
+  "plus_time_zone" : null,
+  "radius_display" : {
+    "mode" : 1,
+    "planetarium_planet" : 1,
+    "planetarium_sun_moon" : 1,
+    "space_planet" : 1,
+    "space_sun" : 1
+  },
+  "renderer" : {
+    "antialias" : true,
+    "line_smoothing" : true,
+    "point_smoothing" : true,
+    "text_smoothing" : true
+  },
+  "satellites" : {
+    "options" : {
+      "labels" : false,
+      "orbits" : false,
+      "selected_only" : false,
+      "visible" : true
+    },
+    "selected_ids" : [
+
+    ],
+    "sources" : [
+
+    ]
+  },
+  "selected_body" : 0,
+  "selected_star_name_hips" : [
+
+  ],
+  "show_galaxies" : false,
+  "show_landscape_image" : true,
+  "show_nebulae" : false,
+  "show_quasars" : false,
+  "show_time_info" : true,
+  "simulation_rate" : 3600,
+  "sky_selected_body" : null,
+  "sky_viewport" : {
+    "center_dec_deg" : 0,
+    "center_ra_deg" : 180,
+    "zoom" : 1
+  },
+  "small_bodies" : {
+    "kinds" : [
+      {
+        "labels" : false,
+        "orbits" : false,
+        "selected_only" : false,
+        "visible" : true
+      },
+      {
+        "labels" : false,
+        "orbits" : false,
+        "selected_only" : false,
+        "visible" : true
+      },
+      {
+        "labels" : false,
+        "orbits" : false,
+        "selected_only" : false,
+        "visible" : true
+      }
+    ],
+    "orbit_sampling" : {
+      "first_jd" : 2451362.375,
+      "last_jd" : 2451727.625,
+      "sample_count" : 201
+    },
+    "selected_ids" : [
+
+    ],
+    "sources" : [
+
+    ],
+    "visible" : false
+  },
+  "solar_camera" : {
+    "distance_au" : 100,
+    "fov_deg" : 45,
+    "frame" : null,
+    "frame_is_orbit" : false,
+    "pitch_deg" : 35,
+    "roll_deg" : 0,
+    "target" : [
+      0,
+      0,
+      0
+    ],
+    "yaw_deg" : 35
+  },
+  "spacecraft" : {
+    "labels" : false,
+    "orbits" : false,
+    "points" : true,
+    "visible" : false
+  },
+  "stars" : {
+    "bayer_labels" : false,
+    "brightness" : 1,
+    "flamsteed_labels" : false,
+    "hip_labels" : false,
+    "marking" : 0,
+    "proper_names" : false,
+    "selected_proper_names_only" : false,
+    "visible" : true
+  },
+  "terrain_amplification" : 1,
+  "time_settings" : {
+    "custom_seconds" : 3600,
+    "step" : 3,
+    "utc_offset_minutes" : 0
+  },
+  "version" : 9
+}

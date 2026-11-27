@@ -79,7 +79,7 @@ pub fn julian_date(date: GregorianDateTime) -> io::Result<f64> {
     Ok(start + f64::from(days) - 0.5
         + (f64::from(hour) * 3600. + f64::from(minute) * 60. + second) / 86400.)
 }
-fn valid_jd(jd: f64) -> io::Result<()> {
+pub(crate) fn valid_jd(jd: f64) -> io::Result<()> {
     // Gregorian -4712-01-01 and 10000-01-01 at midnight.
     if (37.5..5373484.5).contains(&jd) {
         Ok(())
@@ -178,7 +178,7 @@ pub fn j2000_equatorial_to_ecliptic(v: Vector3) -> io::Result<Vector3> {
 
 /// Earth's fixed-to-equatorial rotation from Mitaka 1.3.1 mtk_planet_orientation.cpp.
 /// The epoch tilt used in the precession polynomial differs from the J2000 ecliptic tilt.
-fn earth_axes(jd: f64) -> [Vector3; 3] {
+pub(crate) fn earth_axes(jd: f64) -> [Vector3; 3] {
     let d = jd - J2000;
     let t = d / 36525.;
     let t2 = t * t;

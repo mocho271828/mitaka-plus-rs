@@ -7,6 +7,9 @@ use std::{
 };
 
 pub struct SkyData {
+    pub physical_sky: crate::solar::sky::Catalog,
+    pub deep_sky: std::cell::RefCell<crate::deep_sky::Scene>,
+    pub layers: crate::layers::catalog::LayersCatalog,
     pub root: PathBuf,
     pub(super) date_range: [f64; 2],
     pub stars: Vec<Star>,
@@ -16,11 +19,20 @@ pub struct SkyData {
 }
 impl SkyData {
     pub fn initial_date(&self, preferred: f64) -> f64 {
-        if (self.date_range[0]..=self.date_range[1]).contains(&preferred) {
+        if self.validate_date(preferred).is_ok() {
             preferred
         } else {
             self.date_range[0]
         }
+    }
+
+    pub fn validate_date(&self, jd: f64) -> io::Result<()> {
+        if !(self.date_range[0]..=self.date_range[1]).contains(&jd) {
+            return Err(io::Error::other(
+                "日時が月位置計算またはCF96暦表の有効範囲外です",
+            ));
+        }
+        Ok(())
     }
 
     pub fn open(root: &Path) -> io::Result<Self> {
@@ -58,15 +70,24 @@ impl SkyData {
             }
         }
         let ephemeris = Cf96Ephemeris::load(&root.join("cf96.dat"))?;
-        let mut date_range = ephemeris.time_range(0)?;
-        for i in 1..ephemeris.planet_count() {
+        if ephemeris.planet_count() != 9 {
+            return Err(io::Error::other("CF96は9天体を必要とします"));
+        }
+        let mut date_range = [
+            mitaka_core::lunar::LUNAR_MINIMUM_JD,
+            mitaka_core::lunar::LUNAR_MAXIMUM_JD,
+        ];
+        for i in 0..ephemeris.planet_count() {
             let [lo, hi] = ephemeris.time_range(i)?;
             date_range = [lo.max(date_range[0]), hi.min(date_range[1])];
         }
         if date_range[0] > date_range[1] {
-            return Err(io::Error::other("暦表の有効範囲が重なりません"));
+            return Err(io::Error::other("暦表と月位置計算の有効範囲が重なりません"));
         }
         Ok(Self {
+            physical_sky: crate::solar::sky::Catalog::new(&stars),
+            deep_sky: Default::default(),
+            layers: crate::layers::catalog::LayersCatalog::load(root, &constellations),
             date_range,
             root: root.to_path_buf(),
             stars,

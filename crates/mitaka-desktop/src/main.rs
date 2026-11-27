@@ -1,8 +1,28 @@
+mod camera_control;
+mod capture;
 mod catalog;
 mod chart;
 mod commands;
+mod deep_sky;
 mod fonts;
+mod fullscreen;
+mod galaxies;
+mod layers;
+mod media_preview;
+mod objects;
+mod planet_layers;
+mod planet_scale;
+mod playback;
 mod projection;
+mod projector;
+mod script_ui;
+mod session;
+mod session_ui;
+mod shortcuts;
+mod smoke;
+mod solar;
+mod surface;
+mod viewer;
 
 use crate::{
     catalog::SkyData,
@@ -81,7 +101,25 @@ impl Args {
     }
 }
 struct App {
+    picking: viewer::Picking,
+    quality: viewer::Quality,
+    motion: camera_control::State,
+    terrain_amplification: mitaka_core::terrain::Amplification,
+    background_render: layers::background::Renderer,
+    landscape_render: layers::landscape::LandscapeRenderer,
+    projector: projector::Projector,
+    fullscreen: fullscreen::Fullscreen,
+    media: media_preview::Media,
+    scripts: script_ui::Scripts,
+    playback: playback::Playback,
+    session: session::Session,
     data: Option<SkyData>,
+    solar: solar::Solar,
+    surface: Option<surface::Surface>,
+    galaxies: Option<galaxies::Browser>,
+    capture: Option<PathBuf>,
+    canvas_rect: egui::Rect,
+    objects: objects::Browser,
     menus: Menus,
     view: View,
     sky: Camera,
@@ -95,17 +133,18 @@ struct App {
     search: bool,
     settings: bool,
     info: bool,
+    about: bool,
     search_message: String,
     error: Option<String>,
     utc: String,
-    smoke_frames: Option<u8>,
+    smoke: Option<smoke::Smoke>,
 }
 impl App {
     fn new(
         cc: &eframe::CreationContext<'_>,
         initial: Option<SkyData>,
         error: Option<String>,
-        smoke: bool,
+        smoke: Option<smoke::Smoke>,
     ) -> Result<Self, AppError> {
         fonts::install(&cc.egui_ctx);
         let menus = Menus::new(cc)?;
@@ -113,8 +152,30 @@ impl App {
             .as_ref()
             .map_or(J2000, |data| data.initial_date(J2000));
         let utc = utc_date(jd).ok_or("日時の範囲外です")?;
+        let mut media = media_preview::Media::default();
+        if let Some(data) = &initial {
+            media.reset(&data.root);
+        }
         Ok(Self {
+            picking: Default::default(),
+            quality: Default::default(),
+            terrain_amplification: Default::default(),
             data: initial,
+            motion: Default::default(),
+            background_render: Default::default(),
+            landscape_render: Default::default(),
+            projector: Default::default(),
+            media,
+            scripts: Default::default(),
+            playback: Default::default(),
+            session: Default::default(),
+            solar: Default::default(),
+            surface: None,
+            galaxies: None,
+            capture: None,
+            canvas_rect: egui::Rect::ZERO,
+            objects: Default::default(),
+            fullscreen: fullscreen::Fullscreen::new(cc)?,
             menus,
             view: View::Sky,
             sky: Camera::default(),
@@ -128,11 +189,50 @@ impl App {
             search: false,
             settings: false,
             info: false,
+            about: false,
             search_message: String::new(),
             error,
             utc: utc.format("%Y-%m-%d %H:%M:%S").to_string(),
-            smoke_frames: smoke.then_some(0),
+            smoke,
         })
+    }
+    fn set_terrain_mode(
+        &mut self,
+        mode: mitaka_core::terrain::Amplification,
+    ) -> std::io::Result<()> {
+        if mode == self.terrain_amplification {
+            return Ok(());
+        }
+        let current = self
+            .motion
+            .site
+            .or(self.solar.flight_site)
+            .filter(|s| self.view == View::Solar && matches!(s.body, 3 | 4));
+        if let Some(s) = current.filter(|s| {
+            self.surface
+                .as_ref()
+                .is_none_or(|g| !s.at_location(g.body, g.lat, g.lon))
+        }) {
+            if let Some(data) = &self.data {
+                self.surface = Some(surface::Surface::load_mode(
+                    &data.root, s.body, s.lat, s.lon, 100., mode,
+                )?);
+            }
+        }
+        if let Some(surface) = &mut self.surface {
+            surface.set_mode(mode)?;
+            if let Some(s) = self
+                .motion
+                .site
+                .as_mut()
+                .filter(|s| s.at_location(surface.body, surface.lat, surface.lon))
+            {
+                s.update_terrain(surface.landing_height_m(solar::RADII_KM[s.body]) / 1000.);
+            }
+            self.solar.update_ground(surface, self.jd)?;
+        }
+        self.terrain_amplification = mode;
+        Ok(())
     }
     fn camera(&mut self) -> &mut Camera {
         if self.view == View::Sky {
@@ -142,13 +242,9 @@ impl App {
         }
     }
     fn set_date(&mut self, jd: f64) {
-        if let Err(error) = update_observation_date(
-            &mut self.jd,
-            &mut self.utc,
-            jd,
-            self.data.as_ref().map(|data| data.date_range),
-        ) {
-            self.error = Some(error.into());
+        match self.apply_date(jd) {
+            Ok(()) => self.playback.stop(),
+            Err(e) => self.error = Some(e),
         }
     }
     fn open(&mut self) {
@@ -159,8 +255,22 @@ impl App {
             match SkyData::open(&root) {
                 Ok(data) => {
                     let jd = data.initial_date(self.jd);
+                    self.options.layers.observer.clear();
+                    self.options.layers.selected = None;
+                    self.options.layers.exceptions.clear();
+                    self.media.reset(&data.root);
                     self.data = Some(data);
-                    self.set_date(jd);
+                    if jd != self.jd {
+                        self.set_date(jd);
+                    }
+                    self.motion = Default::default();
+                    self.objects = Default::default();
+                    self.solar = Default::default();
+                    self.surface = None;
+                    self.galaxies = None;
+                    if matches!(self.view, View::Surface) {
+                        self.view = View::Sky;
+                    }
                     self.selected = None;
                     self.error = None;
                     self.search_message.clear();
@@ -169,14 +279,185 @@ impl App {
             }
         }
     }
-    fn execute(&mut self, command: Command) {
+    fn execute(&mut self, command: Command, ctx: &egui::Context) {
+        if matches!(
+            command,
+            Command::Reset
+                | Command::Land
+                | Command::Sky
+                | Command::Horizon
+                | Command::SolarControls
+                | Command::Surface
+        ) {
+            self.interrupt_journey();
+        }
         match command {
+            Command::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            Command::ZoomIn | Command::ZoomOut => {
+                let view = self.view;
+                if matches!(view, View::Sky | View::Horizon) {
+                    let factor = if command == Command::ZoomIn {
+                        1.5
+                    } else {
+                        1. / 1.5
+                    };
+                    self.zoom_chart_at(factor, [0.5, 0.5]);
+                }
+            }
             Command::Open => self.open(),
+            Command::Media => self.media.choose(ctx),
+            Command::MediaList => self.media.browser = true,
+            Command::Projector => {
+                self.projector.controls = true;
+                self.projector.open = true;
+            }
+            Command::Fullscreen => {
+                if let Err(error) = self.fullscreen.request(ctx, None) {
+                    self.error = Some(error.into());
+                }
+            }
+            Command::About => self.about = true,
+            Command::RunScript => self.script_file(ctx),
+            Command::ScriptPanel => self.scripts.panel = true,
+            Command::LocalHtml => self.open_script_html(),
+            Command::RememberState | Command::RecallState => {
+                if let Err(e) = self.remembered_session(command == Command::RememberState) {
+                    self.error = Some(e.to_string());
+                }
+            }
+            Command::SaveWindow | Command::RecallWindow => {
+                if let Err(e) = viewer::window_position(ctx, command == Command::SaveWindow) {
+                    self.error = Some(e.to_string());
+                }
+            }
+            Command::LoadState => self.session_dialog(false),
+            Command::SaveState => self.session_dialog(true),
             Command::Sky => self.view = View::Sky,
             Command::Horizon => self.view = View::Horizon,
+            Command::Objects => self.objects.open = true,
             Command::Settings => self.settings = true,
             Command::Search => self.search = true,
+            Command::Galaxy => {
+                self.view = View::Solar;
+                if let Some(data) = &self.data {
+                    let browser = self
+                        .galaxies
+                        .get_or_insert_with(|| galaxies::Browser::new(data.root.clone(), ctx));
+                    self.solar.stop();
+                    self.motion = Default::default();
+                    browser.open(&mut self.solar.camera, self.canvas_rect);
+                }
+            }
+            Command::Land => {
+                let Some(data) = self.data.as_ref() else {
+                    return;
+                };
+                let ascend = matches!(self.view, View::Horizon | View::Surface)
+                    || self
+                        .motion
+                        .site
+                        .is_some_and(|s| self.view == View::Solar && s.height <= 0.002000001);
+                let body = match self.view {
+                    View::Solar => self.solar.selected,
+                    View::Horizon => 3,
+                    View::Surface => self.surface.as_ref().map_or(3, |s| s.body),
+                    _ => {
+                        self.error = Some("地平図または太陽系で惑星・月を選択してください".into());
+                        return;
+                    }
+                };
+                let (lat, lon) = if self.view == View::Surface {
+                    self.surface
+                        .as_ref()
+                        .map_or((self.latitude, self.longitude), |s| (s.lat, s.lon))
+                } else {
+                    (self.latitude, self.longitude)
+                };
+                if !matches!(body, 3 | 4) {
+                    if let Err(e) = self.nonterrain_mode(ascend, self.motion.mode_duration, false) {
+                        self.error = Some(e.to_string());
+                    }
+                    return;
+                }
+                let result = (|| -> std::io::Result<()> {
+                    let ground = surface::Surface::load_mode(
+                        &data.root,
+                        body,
+                        lat,
+                        lon,
+                        100.,
+                        self.terrain_amplification,
+                    )?;
+                    self.solar.prepare(&data.ephemeris, self.jd)?;
+                    let site = camera_control::session::Site::ground(
+                        body,
+                        lat,
+                        lon,
+                        ground.landing_height_m(solar::RADII_KM[body]),
+                        self.horizon,
+                    );
+                    self.solar.begin_surface_flight(site, self.jd, ascend)?;
+                    self.solar.flight_duration(self.motion.mode_duration);
+                    self.motion.site = None;
+                    self.surface = Some(ground);
+                    self.view = View::Solar;
+                    self.solar.show_controls = false;
+                    Ok(())
+                })();
+                if let Err(e) = result {
+                    self.error = Some(e.to_string());
+                }
+            }
+            Command::Solar => self.view = View::Solar,
+            Command::Journey => self.open_journey(),
+            Command::CameraControls => self.motion.controls = true,
+            Command::SolarControls => {
+                self.view = View::Solar;
+                self.solar.show_controls = true;
+            }
+            Command::Surface => {
+                let Some(data) = &self.data else {
+                    self.error = Some("天文データを開いてください".into());
+                    return;
+                };
+                let body = if self.view == View::Solar {
+                    self.solar.selected
+                } else {
+                    3
+                };
+                match surface::Surface::load_mode(
+                    &data.root,
+                    body,
+                    self.latitude,
+                    self.longitude,
+                    100.,
+                    self.terrain_amplification,
+                ) {
+                    Ok(surface) => {
+                        self.surface = Some(surface);
+                        self.view = View::Surface;
+                    }
+                    Err(e) => self.error = Some(e.to_string()),
+                }
+            }
+            Command::Export => {
+                if self.data.is_some() && self.capture.is_none() {
+                    self.capture = rfd::FileDialog::new()
+                        .set_title("表示を画像に保存")
+                        .set_file_name("Mitaka.png")
+                        .add_filter("PNG", &["png"])
+                        .add_filter("JPEG", &["jpg", "jpeg"])
+                        .add_filter("BMP", &["bmp"])
+                        .save_file();
+                }
+            }
+            Command::Info if self.view == View::Solar => self.solar.show_controls = true,
             Command::Info => self.info = true,
+            Command::Reset if self.view == View::Solar => {
+                self.motion.reset_solar_camera(&mut self.solar);
+                self.objects.stop_tracking();
+            }
+            Command::Reset if self.view == View::Surface => self.view = View::Solar,
             Command::Reset => *self.camera() = Camera::default(),
         }
     }
@@ -214,11 +495,75 @@ impl App {
         }
         self.options.magnitude = self.options.magnitude.max(star.magnitude);
         self.selected = Some(hip);
+        self.solar.layers.select(self.view, None);
+        if matches!(self.view, View::Solar | View::Surface) {
+            self.view = View::Sky;
+        }
         let view = self.view;
         self.camera().center(view, coords);
         self.search_message = format!("HIP {hip} を選択しました");
     }
+    fn capture_frame(&mut self, ctx: &egui::Context) {
+        if self.capture.is_none() {
+            return;
+        }
+        let image = ctx.input(|i| {
+            i.events.iter().find_map(|e| {
+                if let egui::Event::Screenshot {
+                    viewport_id, image, ..
+                } = e
+                {
+                    if *viewport_id != egui::ViewportId::ROOT {
+                        return None;
+                    }
+                    Some(image.clone())
+                } else {
+                    None
+                }
+            })
+        });
+        if let Some(image) = image {
+            if let (Some(path), Some(data)) = (self.capture.take(), self.data.as_ref()) {
+                if let Err(e) = capture::save(
+                    &image,
+                    &path,
+                    &data.root,
+                    self.canvas_rect,
+                    ctx.pixels_per_point(),
+                ) {
+                    self.error = Some(e.to_string());
+                }
+            }
+        } else {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+            ctx.request_repaint();
+        }
+    }
     fn panels(&mut self, ctx: &egui::Context) {
+        egui::Window::new("Mitaka Plus RS について")
+            .open(&mut self.about)
+            .show(ctx, |ui| {
+                ui.heading(concat!("Mitaka Plus RS ", env!("CARGO_PKG_VERSION")));
+                ui.label(
+                    "国立天文台4D2UプロジェクトのMitakaとMitaka Plusをもとにした非公式Rust移植版。",
+                );
+                ui.label("天文データ・画像の権利は各制作者に帰属します。");
+            });
+        self.projector.settings(ctx);
+        self.camera_controls(ctx);
+        self.journey_panel(ctx);
+        self.object_panels(ctx);
+        self.solar.panel(ctx);
+        if let Some(g) = &mut self.galaxies {
+            if self.view == View::Solar {
+                g.panel(
+                    ctx,
+                    &mut self.solar.camera,
+                    self.canvas_rect,
+                    &mut self.options.layers.deep_sky,
+                );
+            }
+        }
         let mut search = self.search;
         egui::Window::new("恒星を検索")
             .open(&mut search)
@@ -269,8 +614,36 @@ impl App {
                     ui.label(format!("JD {:.6}", self.jd));
                 });
                 ui.separator();
-                ui.add(egui::Slider::new(&mut self.latitude, -90. ..=90.).text("緯度 °"));
-                ui.add(egui::Slider::new(&mut self.longitude, -180. ..=180.).text("東経 °"));
+                self.clock_controls(ui);
+                self.solar.layers.panel(ui);
+                let mut mode = self.terrain_amplification;
+                egui::ComboBox::from_label("地形の起伏倍率")
+                    .selected_text(format!("×{}", mode.factor()))
+                    .show_ui(ui, |ui| {
+                        for value in mitaka_core::terrain::Amplification::ALL {
+                            ui.selectable_value(&mut mode, value, format!("×{}", value.factor()));
+                        }
+                    });
+                if let Err(e) = self.set_terrain_mode(mode) {
+                    self.error = Some(e.to_string());
+                }
+                let lat_changed = ui
+                    .add(egui::Slider::new(&mut self.latitude, -90. ..=90.).text("緯度 °"))
+                    .changed();
+                let lon_changed = ui
+                    .add(egui::Slider::new(&mut self.longitude, -180. ..=180.).text("東経 °"))
+                    .changed();
+                if lat_changed || lon_changed {
+                    self.options.layers.observer.clear();
+                }
+                self.picking.ui(ui);
+                self.objects.display.ui(ui);
+                self.options.layers.ui(
+                    ui,
+                    self.data.as_ref(),
+                    &mut self.latitude,
+                    &mut self.longitude,
+                );
                 ui.add(
                     egui::Slider::new(&mut self.options.magnitude, -1.5..=16.).text("V 等級上限"),
                 );
@@ -289,6 +662,25 @@ impl App {
         egui::Window::new("選択天体の情報")
             .open(&mut self.info)
             .show(ctx, |ui| {
+                if let Some((body, data)) = self
+                    .solar
+                    .layers
+                    .selected(self.view)
+                    .zip(self.data.as_ref())
+                {
+                    if let Ok(bodies) = planet_layers::positions(&data.ephemeris, self.jd) {
+                        if let Some(b) = bodies.iter().find(|b| b.id == body) {
+                            ui.label(format!(
+                                "{}\n赤経 {:.5}°　赤緯 {:+.5}°\n地心距離 {:.8} AU",
+                                solar::NAMES[body],
+                                b.equatorial[0],
+                                b.equatorial[1],
+                                b.distance_au
+                            ));
+                            return;
+                        }
+                    }
+                }
                 if let Some((data, hip)) = self.data.as_ref().zip(self.selected) {
                     if let Some(&index) = data.by_hip.get(&hip) {
                         let star = &data.stars[index];
@@ -323,6 +715,72 @@ impl App {
             });
             return;
         }
+        self.canvas_rect = ui.available_rect_before_wrap();
+        if self.view == View::Solar {
+            if ui.rect_contains_pointer(self.canvas_rect)
+                && ui.input(|i| {
+                    i.pointer.any_pressed() || i.smooth_scroll_delta.y != 0. || i.zoom_delta() != 1.
+                })
+            {
+                self.interrupt_journey();
+            }
+            let data = self.data.as_ref().unwrap();
+            let galaxies = self
+                .galaxies
+                .get_or_insert_with(|| galaxies::Browser::new(data.root.clone(), ui.ctx()));
+            let view = solar::ViewSettings {
+                data,
+                jd: self.jd,
+                picking: self.picking,
+                terrain_mode: self.terrain_amplification,
+                layers: &self.options.layers,
+                galaxies,
+                surface_site: self.motion.site.as_mut(),
+                observer: [self.latitude, self.longitude],
+                horizon_camera: self.horizon,
+                star_display: solar::sky::Display {
+                    magnitude: self.options.magnitude,
+                    lines: self.options.lines,
+                    labels: self.options.labels,
+                    selected: self.selected,
+                },
+            };
+            if let Err(e) = self.solar.draw(ui, view) {
+                ui.label(e.to_string());
+            }
+            if let Some(hit) = self.solar.sky_pick {
+                self.selected = match hit {
+                    solar::sky::Selection::Star(hip) => Some(hip),
+                    solar::sky::Selection::Constellation(_) => None,
+                };
+            }
+            if let Some(solar::sky::Selection::Constellation(i)) = self.solar.sky_selection {
+                if let Some(r) = data.constellations.get(i) {
+                    ui.painter().text(
+                        ui.clip_rect().left_bottom() + egui::vec2(10., -8.),
+                        egui::Align2::LEFT_BOTTOM,
+                        format!(
+                            "選択した星座　{}",
+                            layers::catalog::decode(&r.japanese_kanji_bytes)
+                        ),
+                        egui::FontId::proportional(13.),
+                        egui::Color32::GOLD,
+                    );
+                }
+            }
+            self.object_in_solar(ui);
+            self.script_marker(ui);
+            self.draw_horizon_flight(ui);
+            return;
+        }
+        if self.view == View::Surface {
+            if let Some(surface) = &mut self.surface {
+                if let Some(data) = &self.data {
+                    surface.draw(ui, &data.ephemeris, self.jd);
+                }
+            }
+            return;
+        }
         let (response, painter) =
             ui.allocate_painter(ui.available_size(), egui::Sense::click_and_drag());
         let rect = response.rect;
@@ -330,10 +788,9 @@ impl App {
             return;
         }
         let view = self.view;
-        let camera = self.camera();
         if response.dragged() {
             let delta = response.drag_delta();
-            camera.pan(
+            self.camera().pan(
                 view,
                 f64::from(delta.x / rect.width()),
                 f64::from(delta.y / rect.height()),
@@ -343,8 +800,7 @@ impl App {
             let factor = ui
                 .input(|i| (i.smooth_scroll_delta.y * 0.008).clamp(-2., 2.).exp() * i.zoom_delta());
             if (factor - 1.).abs() > 1e-6 {
-                camera.zoom_at(
-                    view,
+                self.zoom_chart_at(
                     factor.into(),
                     [
                         f64::from((mouse.x - rect.left()) / rect.width()),
@@ -353,55 +809,202 @@ impl App {
                 );
             }
         }
-        let camera = *camera;
+        let camera = *self.camera();
         let Ok(frame) = ObservationFrame::new(self.latitude, self.longitude, self.jd) else {
             return;
         };
         let chart = Chart {
+            flight: None,
             view,
             camera,
             frame: &frame,
             rect,
         };
-        let click = response
-            .clicked()
-            .then(|| response.interact_pointer_pos())
-            .flatten();
+        let pointer = self.picking.pointer(&response);
         let Some(data) = self.data.as_ref() else {
             return;
         };
-        let pick = chart.paint(&painter, data, &self.options, self.selected, click);
-        if click.is_some() {
-            self.selected = pick;
+        self.background_render.paint(
+            &painter,
+            &chart,
+            &data.layers.backgrounds,
+            self.options.layers.milky_way,
+            [self.latitude, self.longitude, self.jd],
+        );
+        let show_landscape = view == View::Horizon && self.options.layers.landscape;
+        if show_landscape {
+            self.landscape_render.prepare(
+                &painter,
+                &data.layers.landscapes,
+                &data.layers.places,
+                &self.options.layers.observer,
+                (camera, camera.roll),
+                rect,
+            );
+        }
+        let opaque = |p| show_landscape && self.landscape_render.opaque_at(p);
+        let mut pick = pointer
+            .filter(|p| !opaque(*p))
+            .map(|p| chart::ChartPick::new(p, &opaque));
+        chart.paint(&painter, data, &self.options, self.selected, pick.as_mut());
+        if let Ok(bodies) = planet_layers::positions(&data.ephemeris, self.jd) {
+            self.solar
+                .layers
+                .paint(&chart, &painter, &bodies, pick.as_mut());
+        }
+        self.object_on_sky(&chart, &painter);
+        let moving = view == View::Horizon
+            && self.objects.paint_horizon(
+                data,
+                [self.jd, self.latitude, self.longitude],
+                objects::horizon::Canvas {
+                    chart: &chart,
+                    painter: &painter,
+                    pointer,
+                    nearest: pick.as_ref().map_or(f32::INFINITY, |p| p.distance_sq),
+                    opaque: &opaque,
+                    picking: self.picking,
+                },
+            );
+        if show_landscape {
+            self.landscape_render.paint(&painter, rect);
+        }
+        if pointer.is_some() {
+            let (star, body) = match pick.and_then(|p| p.target).filter(|_| !moving) {
+                Some(chart::ChartTarget::Star(hip)) => (Some(hip), None),
+                Some(chart::ChartTarget::Body(id)) => (None, Some(id)),
+                None => (None, None),
+            };
+            self.solar.layers.select(view, body);
+            self.selected = star;
             ui.ctx().request_repaint();
+        }
+    }
+    fn draw_horizon_flight(&mut self, ui: &egui::Ui) {
+        let Some(f) = self.solar.horizon_overlay else {
+            return;
+        };
+        let Some(site) = self.solar.flight_site else {
+            return;
+        };
+        let Some(data) = &self.data else { return };
+        let Ok(frame) = ObservationFrame::new(site.lat, site.lon, self.jd) else {
+            return;
+        };
+        let chart = Chart {
+            view: View::Horizon,
+            rect: f.rect,
+            camera: f.camera,
+            frame: &frame,
+            flight: Some(f),
+        };
+        let mut painter = ui.painter().with_clip_rect(f.rect);
+        painter.multiply_opacity((1. - f.blend) as f32);
+        painter.rect_filled(f.rect, 0., Color32::from_rgb(6, 11, 18));
+        self.background_render.paint(
+            &painter,
+            &chart,
+            &data.layers.backgrounds,
+            self.options.layers.milky_way,
+            [site.lat, site.lon, self.jd],
+        );
+        chart.paint(&painter, data, &self.options, self.selected, None);
+        if let Ok(bodies) = planet_layers::positions(&data.ephemeris, self.jd) {
+            self.solar.layers.paint(&chart, &painter, &bodies, None);
+        }
+        self.object_on_sky(&chart, &painter);
+        if self.options.layers.landscape {
+            self.landscape_render.prepare(
+                &painter,
+                &data.layers.landscapes,
+                &data.layers.places,
+                &self.options.layers.observer,
+                (f.camera, f.camera.roll),
+                f.rect,
+            );
+            self.landscape_render.paint_flight(&painter, f);
         }
     }
 }
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
-        for command in self.menus.poll(ctx) {
-            self.execute(command);
+        if let Err(error) = self.fullscreen.poll(ctx) {
+            self.error = Some(error.into());
         }
-        if !ctx.wants_keyboard_input() {
-            for (key, command) in [(Key::F, Command::Search), (Key::O, Command::Open)] {
-                if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, key)) {
-                    self.execute(command);
+        self.camera_frame(ctx);
+        self.clock_frame(ctx);
+        if self
+            .options
+            .layers
+            .sample_brightness(std::time::Instant::now())
+        {
+            ctx.request_repaint_after(std::time::Duration::from_millis(16));
+        }
+        self.scripts_frame(ctx);
+        self.media.frame(ctx);
+        if self.view == View::Solar {
+            if let Some(body) = self.solar.landed.take() {
+                let arrival = self.solar.flight_site;
+                self.solar.stop();
+                if let Some(site) = arrival {
+                    self.horizon.longitude = site.heading;
+                    self.horizon.latitude = site.elevation;
+                    self.horizon.roll = site.roll;
+                    if body == 3 {
+                        self.latitude = site.lat;
+                        self.longitude = site.lon;
+                    }
+                }
+                if body == 3 {
+                    self.view = View::Horizon;
+                } else if let Some(ground) = self.surface.as_ref().filter(|g| g.body == body) {
+                    self.motion.site = Some(camera_control::session::Site::from_surface(
+                        ground,
+                        self.horizon,
+                    ));
+                    self.view = View::Solar;
                 }
             }
         }
-        egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(Color32::from_rgb(6, 11, 18)))
-            .show(ctx, |ui| self.canvas(ui));
-        self.panels(ctx);
-        if let Some(frame) = self.smoke_frames.as_mut() {
-            *frame += 1;
-            if *frame == 1 {
-                self.view = View::Horizon;
+        for command in self.menus.poll(ctx) {
+            self.execute(command, ctx);
+        }
+        if !ctx.wants_keyboard_input() {
+            let chart = matches!(self.view, View::Sky | View::Horizon);
+            for command in shortcuts::commands(ctx, chart) {
+                self.execute(command, ctx);
             }
-            if *frame >= 3 {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            } else {
-                ctx.request_repaint();
+        }
+        let canvas_layer = egui::CentralPanel::default()
+            .frame(egui::Frame::NONE.fill(Color32::from_rgb(6, 11, 18)))
+            .show(ctx, |ui| {
+                self.canvas(ui);
+                ui.layer_id()
+            })
+            .inner;
+        self.quality.apply(ctx, canvas_layer, &self.options.layers);
+        self.projector.frame(ctx, canvas_layer, self.canvas_rect);
+        if self.playback.show && self.data.is_some() {
+            egui::Area::new("current date".into())
+                .anchor(egui::Align2::LEFT_BOTTOM, [8., -8.])
+                .interactable(false)
+                .show(ctx, |ui| {
+                    if let Some(date) = utc_date(self.jd) {
+                        ui.label(
+                            egui::RichText::new(date.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                                .background_color(Color32::BLACK)
+                                .color(Color32::WHITE),
+                        );
+                    }
+                });
+        }
+        self.capture_frame(ctx);
+        if self.capture.is_none() {
+            self.panels(ctx);
+        }
+        if let Some(mut smoke) = self.smoke.take() {
+            if !smoke.frame(self, ctx) {
+                self.smoke = Some(smoke);
             }
         }
     }
@@ -456,12 +1059,23 @@ fn run() -> Result<(), AppError> {
             .with_min_inner_size([400., 300.]),
         ..Default::default()
     };
+    let (smoke, rx) = if args.smoke {
+        let (s, r) = smoke::Smoke::new();
+        (Some(s), Some(r))
+    } else {
+        (None, None)
+    };
     eframe::run_native(
         "Mitaka Plus",
         options,
-        Box::new(move |cc| Ok(Box::new(App::new(cc, data, error, args.smoke)?))),
+        Box::new(move |cc| Ok(Box::new(App::new(cc, data, error, smoke)?))),
     )
-    .map_err(|e| e.to_string().into())
+    .map_err(|e| e.to_string())?;
+    if let Some(rx) = rx {
+        rx.try_recv()
+            .map_err(|_| "描画検証中にウィンドウが閉じられました")??;
+    }
+    Ok(())
 }
 fn main() {
     if let Err(error) = run() {

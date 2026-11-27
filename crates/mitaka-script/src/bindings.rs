@@ -121,8 +121,10 @@ pub const FIELDS: &[Field] = &[
     flag("GUI", "timeSetting", "toggleTimeSetting", "timeSetting", 14, true),
     flag("GUI", "placeSetting", "togglePlaceSetting", "placeSetting", 15, true),
     flag("GUI", "scriptOutput", "toggleScriptOutput", "scriptOutput", 16, true),
-    flag("GUI", "dualScreen", "toggleDualScreen", "dualScreen", 17, false),
+    flag("GUI", "dualScreen", "toggleDualScreen", "dualScreen", 17, true),
     field("Time", "JD", "jd", 0, Finite),
+    field("Stars","markingType","starMarking",22,Text),
+    field("Stars","brightness","starBrightness",60,Finite),
     field("Time", "step", "timeStep", 72, Index(11)),
     field("Time", "stepValue", "timeStepValue", 73, Finite),
     field("Time", "speed", "timeSpeed", 74, Speed),
@@ -135,8 +137,11 @@ pub const FIELDS: &[Field] = &[
     field("Camera", "fov", "cameraFov", 104, FieldOfView),
     field("Camera", "azimuth", "azimuth", 12, Finite),
     field("Camera", "altitude", "altitude", 89, Finite),
+    field("Planets", "topoAmplification", "topoAmplification", 86, Index(5)),
+    field("Planets", "scaleMode", "radiusScaleMode", 88, Index(1)),
     field("Planets", "atmosphere", "atmosphereMode", 71, Index(2)),
     field("GUI", "fullScreen", "fullScreen", 41, Bool),
+    field("Milkyway", "type", "milkyWay", 21, Text),
     field("Targets", "selectMode", "targetSelectionMode", 106, Index(2)),
 ];
 
