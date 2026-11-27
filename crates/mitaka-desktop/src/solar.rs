@@ -382,6 +382,9 @@ impl Solar {
         }
         Ok(())
     }
+    pub(crate) fn stationary_surface(&self) -> bool {
+        self.flight_site.is_some() && self.surface_flight.is_none()
+    }
     pub(crate) fn flight_duration(&mut self, seconds: f64) {
         if let Some(f) = &mut self.surface_flight {
             f.duration = seconds
