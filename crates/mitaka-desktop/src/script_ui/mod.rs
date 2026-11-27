@@ -487,6 +487,8 @@ impl App {
         // 2000年1月・3月を使う繰越検査は、暦表が両方の検査日時を含むときに行う。
         let [first, last] = data.date_range;
         let check_2000_dates = first <= crate::J2000 && last >= crate::J2000 + 60.;
+        let check_month_end =
+            first <= 2460341.5 - 0.25 / 86400. && last >= 2460372.5 - 0.25 / 86400.;
         self.objects = Default::default();
         self.solar = Default::default();
         self.view = crate::projection::View::Solar;
@@ -507,6 +509,14 @@ Renderer.lineSmooth=false
 Renderer.pointSmooth=false
 assert(not Renderer.textSmooth and not Renderer.lineSmooth)
 local saved = Time.JD
+if check_month_end then
+    local step = Time.step
+    Time.JD = 2460341.5 - 0.25 / 86400
+    Time.step = STEP_MONTH
+    Time:forward()
+    assert(math.abs(Time.JD - (2460372.5 - 0.25 / 86400)) < 1e-9)
+    Time.step = step
+end
 if check_2000_dates then
     Time:setTime(2000,2,30,3,4,5)
     assert(Time:getTimeString() == '2000,3,1,3,4,5')
@@ -582,7 +592,7 @@ print('camera-check-complete')
         } else {
             std::borrow::Cow::Owned(check.replace("Star.Sirius", "Planet.Mars"))
         };
-        let check = format!("local check_2000_dates = {check_2000_dates}\n{check}");
+        let check = format!("local check_2000_dates, check_month_end = {check_2000_dates}, {check_month_end}\n{check}");
         let file = local_source(dir.path(), &check)?;
         self.scripts.launch(file, false, root, dir, ctx);
         Ok(())
