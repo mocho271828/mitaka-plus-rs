@@ -135,6 +135,8 @@ pub(super) fn check_restart(app: &mut App) -> io::Result<()> {
     mismatch.write(&path)?;
     let incompatible = std::fs::read(&path)?;
     set_flags(app, opposite);
+    let manual = directory.path().join("session.json");
+    app.save_session(&manual)?;
     for (original, can_retry) in [
         (incompatible.as_slice(), true),
         (b"invalid json" as &[u8], false),
@@ -165,6 +167,31 @@ pub(super) fn check_restart(app: &mut App) -> io::Result<()> {
                 ));
             }
             set_flags(app, opposite);
+            app.preferences = Preferences::Unread(path.clone());
+            app.restore_preferences();
+            if app.restore_session(&path).is_ok() {
+                return Err(io::Error::other("不一致のセッションを復元しました"));
+            }
+            app.save_preferences()?;
+            if std::fs::read(&path)? != original {
+                return Err(io::Error::other("手動復元の失敗で保留設定を上書きしました"));
+            }
+        }
+        app.restore_session(&manual)?;
+        app.save_preferences()?;
+        if can_retry {
+            let restored = Session::read(&path)?;
+            if restored.0["constellations"]["lines"].as_bool() != Some(opposite[0])
+                || restored.0["selected_star_name_hips"] == mismatch.0["selected_star_name_hips"]
+            {
+                return Err(io::Error::other(
+                    "明示復元後も古い表示設定が保留されています",
+                ));
+            }
+        } else if std::fs::read(&path)? != original {
+            return Err(io::Error::other(
+                "手動復元で破損した表示設定を上書きしました",
+            ));
         }
     }
     if std::fs::read(&remembered)? != b"remembered" {
