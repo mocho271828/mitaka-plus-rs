@@ -130,15 +130,20 @@ impl State {
     pub(crate) fn stop_motion(&mut self, solar: &mut crate::solar::Solar) {
         self.physical_flight = None;
         self.journey.flight = None;
-        self.place = None;
+        self.zoom = None;
+        self.stop_horizon_animations();
         self.place_name = None;
+        solar.stop();
+    }
+    fn stop_horizon_animations(&mut self) {
+        if self.place.take().is_some() {
+            self.place_name = None;
+        }
         self.target = None;
         self.turn = None;
         self.az = None;
         self.alt = None;
-        self.zoom = None;
         self.fov = None;
-        solar.stop();
     }
 }
 fn tick(slot: &mut Option<Scalar>, now: Instant) -> Option<f64> {
@@ -224,8 +229,15 @@ impl App {
         self.horizon.zoom = 180. / f.max(crate::projection::MIN_HORIZON_FOV);
         self.motion.horizon_fov = Some((self.horizon.zoom, f));
     }
+    pub(crate) fn manual_chart_camera(&mut self) -> &mut crate::projection::Camera {
+        if self.view == View::Horizon {
+            self.motion.stop_horizon_animations();
+        }
+        self.camera()
+    }
     pub(crate) fn zoom_chart_at(&mut self, factor: f64, anchor: [f64; 2]) {
         if self.view == View::Horizon {
+            self.motion.stop_horizon_animations();
             let fov = self
                 .horizon
                 .zoom_horizon_at(self.horizon_fov(), factor, anchor);
@@ -689,6 +701,50 @@ mod motion_tests {
 #[cfg(test)]
 mod reset_tests {
     use super::*;
+    #[test]
+    fn manual_horizon_input_holds_the_camera_on_the_next_animation_tick() {
+        let start = Instant::now();
+        let movement = Scalar {
+            time: Interval {
+                start,
+                seconds: 5.,
+                smooth: false,
+            },
+            a: 40.,
+            b: 160.,
+            log: false,
+        };
+        let mut state = State {
+            az: Some(movement),
+            alt: Some(movement),
+            fov: Some(movement),
+            turn: Some(Turn {
+                view: View::Horizon,
+                time: movement.time,
+                rot: Rotation::Euler([0.; 3], [90.; 3]),
+            }),
+            place_name: Some("Planet.Earth.Tatesho".into()),
+            ..Default::default()
+        };
+        let mut camera = crate::projection::Camera {
+            zoom: 4.,
+            ..Default::default()
+        };
+        state.stop_horizon_animations();
+        camera.pan(View::Horizon, 0.2, 0.1);
+        let next = start + std::time::Duration::from_secs(1);
+        assert_eq!(
+            tick(&mut state.az, next).unwrap_or(camera.longitude),
+            camera.longitude
+        );
+        assert_eq!(
+            tick(&mut state.alt, next).unwrap_or(camera.latitude),
+            camera.latitude
+        );
+        assert!(tick(&mut state.fov, next).is_none());
+        assert!(state.turn.is_none());
+        assert_eq!(state.place_name.as_deref(), Some("Planet.Earth.Tatesho"));
+    }
     #[test]
     fn solar_reset_leaves_navigation_and_retains_display_settings() {
         let mut motion = State {

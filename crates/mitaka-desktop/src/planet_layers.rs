@@ -140,7 +140,7 @@ impl PlanetLayers {
             if self.visible {
                 painter.circle_filled(p, r, COLORS[id]);
                 if let Some(pick) = pick.as_deref_mut() {
-                    pick.consider(ChartTarget::Body(id), p, r.max(8.));
+                    pick.consider(ChartTarget::Body(id), body.equatorial, p, r.max(8.));
                 }
             }
             if self.labels {
@@ -187,24 +187,24 @@ mod tests {
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
             let painter = ctx.layer_painter(egui::LayerId::background());
             let mut pick = ChartPick::new(star, &|_| false);
-            pick.consider(ChartTarget::Star(92111), star, 8.);
+            pick.consider(ChartTarget::Star(92111), [281.5858, -22.3922], star, 8.);
             layers.paint(&chart, &painter, &bodies, Some(&mut pick));
-            assert_eq!(pick.target, Some(ChartTarget::Star(92111)));
+            assert_eq!(pick.target.map(|t| t.0), Some(ChartTarget::Star(92111)));
 
             let mut tie = ChartPick::new(center, &|_| false);
-            tie.consider(ChartTarget::Star(1), center, 8.);
+            tie.consider(ChartTarget::Star(1), bodies[0].equatorial, center, 8.);
             layers.paint(&chart, &painter, &bodies, Some(&mut tie));
-            assert_eq!(tie.target, Some(ChartTarget::Body(0)));
+            assert_eq!(tie.target.map(|t| t.0), Some(ChartTarget::Body(0)));
 
             layers.scales[3] = 8.;
             let mut outer = ChartPick::new(center + egui::vec2(20., 0.), &|_| false);
             layers.paint(&chart, &painter, &bodies, Some(&mut outer));
-            assert_eq!(outer.target, Some(ChartTarget::Body(0)));
+            assert_eq!(outer.target.map(|t| t.0), Some(ChartTarget::Body(0)));
 
             layers.visible = false;
             let mut label_only = ChartPick::new(center, &|_| false);
             layers.paint(&chart, &painter, &bodies, Some(&mut label_only));
-            assert_eq!(label_only.target, None);
+            assert_eq!(label_only.target.map(|t| t.0), None);
         });
     }
     #[test]
