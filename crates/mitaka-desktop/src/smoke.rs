@@ -37,6 +37,28 @@ fn check_date_limits(app: &mut App) -> io::Result<()> {
         .date_range;
     reject_next_to(app, first, first - 1.)?;
     reject_next_to(app, last, last + 1.)?;
+    app.jd_input = first.to_string();
+    app.submit_julian_input();
+    if app.jd != first || app.jd_input != format!("{first:.6}") {
+        return Err(io::Error::other("JD欄で暦表の初日を適用できません"));
+    }
+    let utc = app.utc.clone();
+    for input in [
+        "invalid".into(),
+        "NaN".into(),
+        "inf".into(),
+        (last + 1.).to_string(),
+    ] {
+        app.jd_input = input;
+        app.submit_julian_input();
+        if app.error.take().is_none()
+            || app.jd != first
+            || app.utc != utc
+            || app.jd_input != format!("{first:.6}")
+        {
+            return Err(io::Error::other("JD欄で無効な入力から元の日時に戻れません"));
+        }
+    }
     app.error = original_error;
     app.apply_date(initial).map_err(io::Error::other)
 }
