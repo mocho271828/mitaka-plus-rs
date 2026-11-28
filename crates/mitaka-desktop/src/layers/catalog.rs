@@ -32,11 +32,29 @@ pub fn decode(bytes: &[u8]) -> Cow<'_, str> {
         .map(Cow::Borrowed)
         .unwrap_or_else(|_| encoding_rs::SHIFT_JIS.decode_without_bom_handling(bytes).0)
 }
+pub(crate) fn gui_star_names(
+    root: &Path,
+) -> io::Result<(&'static str, Vec<extended_catalog::StarName>)> {
+    let japanese = "star_names_jp.dat";
+    let english = "star_names.dat";
+    let filename = if root.join(japanese).try_exists()? {
+        japanese
+    } else if root.join(english).try_exists()? {
+        english
+    } else {
+        "star_names_HIP.dat"
+    };
+    Ok((
+        filename,
+        extended_catalog::load_star_names(&root.join(filename))?,
+    ))
+}
+
 impl LayersCatalog {
     pub fn load(root: &Path, constellations: &[Constellation]) -> Self {
         let mut out = Self::default();
-        match extended_catalog::load_star_names(&root.join("star_names_HIP.dat")) {
-            Ok(rows) => {
+        match gui_star_names(root) {
+            Ok((_, rows)) => {
                 for row in rows {
                     out.known_star_names.insert(row.hip);
                     let name = if matches!(row.localized_name_bytes.as_slice(), b"" | b"*") {
