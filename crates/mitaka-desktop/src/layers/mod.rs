@@ -79,7 +79,7 @@ impl LayerOptions {
     pub fn shows(&self, id: &[u8]) -> bool {
         self.show_all_constellations != self.exceptions.contains(id)
     }
-    pub fn ui(
+    pub fn place_ui(
         &mut self,
         ui: &mut egui::Ui,
         data: Option<&crate::catalog::SkyData>,
@@ -115,6 +115,8 @@ impl LayerOptions {
                     }
                 });
         }
+    }
+    pub fn ui(&mut self, ui: &mut egui::Ui, data: Option<&crate::catalog::SkyData>) {
         ui.collapsing("距離目盛と描画品質", |ui| {
             ui.checkbox(&mut self.circle_scales, "距離目盛（円）");
             ui.checkbox(&mut self.square_scales, "距離目盛（正方形）");
