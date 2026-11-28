@@ -1,10 +1,31 @@
 use crate::{
+    preferences::Preferences,
     projection::{Camera, View},
     session::Session,
     App,
 };
 use serde_json::{json, Value};
 use std::{io, path::Path};
+
+pub(super) struct DisplayLayers {
+    options: crate::layers::LayerOptions,
+    selections: crate::objects::selections::Selections,
+    terrain: mitaka_core::terrain::Amplification,
+}
+
+impl DisplayLayers {
+    pub fn prepare(state: &Session, data: &crate::catalog::SkyData) -> io::Result<Self> {
+        Ok(Self {
+            options: crate::layers::LayerOptions::restore(&state.0, data)?,
+            selections: crate::objects::selections::Selections::load(&data.root, &state.0)?,
+            terrain: state.terrain_amplification()?,
+        })
+    }
+}
+
+fn num(v: &Value, key: &str) -> f64 {
+    v[key].as_f64().expect("session validated this number")
+}
 
 impl App {
     pub fn session_dialog(&mut self, save: bool) {
@@ -33,9 +54,7 @@ impl App {
         if self.data.is_none() {
             return Err(io::Error::other("先に天文データを開いてください"));
         }
-        let root = dirs::config_dir()
-            .ok_or_else(|| io::Error::other("アプリ設定の保存先を特定できません"))?
-            .join("mitaka-plus-rs");
+        let root = crate::preferences::config_dir()?;
         let path = root.join("remembered-v9.json");
         if save {
             std::fs::create_dir_all(&root)?;
@@ -65,24 +84,31 @@ impl App {
         v["magnitude_limit"] = json!(self.options.magnitude);
         v["observer_latitude_deg"] = json!(self.latitude);
         v["observer_longitude_deg"] = json!(self.longitude);
-        self.options.layers.save(v, data);
-        v["constellations"]["lines"] = json!(self.options.lines);
-        v["constellations"]["labels"] = json!(self.options.labels);
-        v["planets"]["orbits"] = json!(self.solar.orbits);
+        self.write_display_settings(v, data);
         self.session_camera(v)?;
         v["selected_body"] = json!(if self.view == View::Surface {
             self.surface.as_ref().unwrap().body
         } else {
             self.solar.selected
         });
+        v["sky_selected_body"] = json!(self.solar.layers.sky_selected);
+        v["horizon_selected_body"] = json!(self.solar.layers.horizon_selected);
+        let p = &self.playback;
+        v["plus_time"] = json!({"speed":p.plus_speed,"step":p.plus_step,"value_days":p.plus_value});
+        v["simulation_rate"] = json!(p.rate);
+        state.write(&path)
+    }
+    pub(super) fn write_display_settings(&self, v: &mut Value, data: &crate::catalog::SkyData) {
+        self.options.layers.save(v, data);
+        v["constellations"]["lines"] = json!(self.options.lines);
+        v["constellations"]["labels"] = json!(self.options.labels);
+        v["planets"]["orbits"] = json!(self.solar.orbits);
         self.objects.selections.apply_to(v);
         self.objects.display.store(v);
         let layers = &self.solar.layers;
         v["planets"]["visible"] = json!(layers.visible);
         v["planets"]["labels"] = json!(layers.labels);
         v["planets"]["axes"] = json!(layers.axes);
-        v["sky_selected_body"] = json!(layers.sky_selected);
-        v["horizon_selected_body"] = json!(layers.horizon_selected);
         v["radius_display"]["mode"] = json!(u8::from(!layers.keep_radius));
         for (key, scale) in [
             "space_planet",
@@ -101,13 +127,11 @@ impl App {
         v["eclipse"] = json!({"shadows":surface.eclipse.shadows, "shadow_borders":surface.eclipse.borders,"shadow_umbra":surface.eclipse.umbra,"shadow_penumbra":surface.eclipse.penumbra});
         v["atmosphere"] = json!({"mode":surface.air as u8,"intensity":surface.intensity});
         let p = &self.playback;
-        v["plus_time"] = json!({"speed":p.plus_speed,"step":p.plus_step,"value_days":p.plus_value});
-        v["simulation_rate"] = json!(p.rate);
         v["show_time_info"] = json!(p.show);
         v["time_settings"] =
             json!({"step":p.gui_step,"custom_seconds":p.seconds,"utc_offset_minutes":p.offset});
-        state.write(&path)
     }
+
     pub(crate) fn restore_session(&mut self, path: &Path) -> io::Result<()> {
         let state = Session::read(path)?;
         let v = &state.0;
@@ -115,13 +139,10 @@ impl App {
             .data
             .as_ref()
             .ok_or_else(|| io::Error::other("先にデータを開いてください"))?;
-        let num = |v: &Value, key: &str| -> f64 {
-            v[key].as_f64().expect("session validated this number")
-        };
         let jd = num(v, "julian_date");
         data.validate_date(jd)?;
         let restored_site = crate::camera_control::session::saved_site(v)?;
-        let selections = crate::objects::selections::Selections::load(&data.root, v)?;
+        let display = DisplayLayers::prepare(&state, data)?;
         let camera = &v["solar_camera"];
         let target = std::array::from_fn(|i| camera["target"][i].as_f64().unwrap());
         let precise = camera
@@ -130,15 +151,11 @@ impl App {
                 anchor_pc: std::array::from_fn(|i| p["anchor_pc"][i].as_f64().unwrap()),
                 offset_au: std::array::from_fn(|i| p["offset_au"][i].as_f64().unwrap()),
             });
-        let layers = crate::layers::LayerOptions::restore(v, data)?;
-        let terrain_amplification = state.terrain_amplification()?;
         // 検証と出典照合が全て成功してから、補間を停止して一括適用する。
         self.objects = Default::default();
-        self.objects.selections = selections;
-        self.objects.display = crate::objects::Browser::restore_display(v);
+        self.playback = Default::default();
+        self.apply_display_settings(v, display);
         self.scripts.cancel();
-        self.options.layers = layers;
-        self.terrain_amplification = terrain_amplification;
         self.solar.stop();
         self.set_date(jd);
         self.camera_extras_after_restore(camera, restored_site);
@@ -151,7 +168,6 @@ impl App {
         self.solar.camera.yaw = num(camera, "yaw_deg");
         self.solar.camera.pitch = num(camera, "pitch_deg");
         self.solar.camera.roll = num(camera, "roll_deg");
-        self.solar.orbits = v["planets"]["orbits"].as_bool().unwrap();
         self.solar.selected = num(v, "selected_body") as usize;
         self.sky = Camera {
             longitude: num(&v["sky_viewport"], "center_ra_deg"),
@@ -166,8 +182,6 @@ impl App {
             roll: num(&v["horizon_viewport"], "roll_deg"),
         };
         self.set_horizon_fov(num(&v["horizon_viewport"], "fov_deg"));
-        self.options.lines = v["constellations"]["lines"].as_bool().unwrap();
-        self.options.labels = v["constellations"]["labels"].as_bool().unwrap();
         self.options.magnitude = num(v, "magnitude_limit") as f32;
         self.latitude = num(v, "observer_latitude_deg");
         self.longitude = num(v, "observer_longitude_deg");
@@ -180,11 +194,30 @@ impl App {
         self.surface = None;
         self.galaxies = None;
         let layers = &mut self.solar.layers;
+        layers.sky_selected = v["sky_selected_body"].as_f64().map(|i| i as usize);
+        layers.horizon_selected = v["horizon_selected_body"].as_f64().map(|i| i as usize);
+        let p = &mut self.playback;
+        p.plus_step = num(&v["plus_time"], "step") as usize;
+        p.plus_value = num(&v["plus_time"], "value_days");
+        p.rate = num(v, "simulation_rate");
+        self.session = state;
+        if let Preferences::Pending(path, _) = &self.preferences {
+            self.preferences = Preferences::Ready(path.clone());
+        }
+        Ok(())
+    }
+    pub(super) fn apply_display_settings(&mut self, v: &Value, display: DisplayLayers) {
+        self.options.layers = display.options;
+        self.objects.selections = display.selections;
+        self.objects.display = crate::objects::Browser::restore_display(v);
+        self.terrain_amplification = display.terrain;
+        self.options.lines = v["constellations"]["lines"].as_bool().unwrap();
+        self.options.labels = v["constellations"]["labels"].as_bool().unwrap();
+        self.solar.orbits = v["planets"]["orbits"].as_bool().unwrap();
+        let layers = &mut self.solar.layers;
         layers.visible = v["planets"]["visible"].as_bool().unwrap();
         layers.labels = v["planets"]["labels"].as_bool().unwrap();
         layers.axes = v["planets"]["axes"].as_bool().unwrap();
-        layers.sky_selected = v["sky_selected_body"].as_f64().map(|i| i as usize);
-        layers.horizon_selected = v["horizon_selected_body"].as_f64().map(|i| i as usize);
         layers.keep_radius = num(&v["radius_display"], "mode") == 0.;
         layers.scales = [
             "space_planet",
@@ -205,16 +238,10 @@ impl App {
         surface.air =
             crate::solar::sphere::Air::from_index(num(&v["atmosphere"], "mode") as u64).unwrap();
         surface.intensity = num(&v["atmosphere"], "intensity");
-        self.playback = Default::default();
         let p = &mut self.playback;
-        p.plus_step = num(&v["plus_time"], "step") as usize;
-        p.plus_value = num(&v["plus_time"], "value_days");
-        p.rate = num(v, "simulation_rate");
         p.show = v["show_time_info"].as_bool().unwrap();
         p.gui_step = num(&v["time_settings"], "step") as usize;
         p.seconds = num(&v["time_settings"], "custom_seconds") as u32;
         p.offset = num(&v["time_settings"], "utc_offset_minutes") as i32;
-        self.session = state;
-        Ok(())
     }
 }
