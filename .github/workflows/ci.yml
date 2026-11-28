@@ -29,7 +29,7 @@ jobs:
       - name: Rust toolchain
         run: rustup show active-toolchain
       - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libx11-dev libx11-xcb-dev libxcb-shape0-dev libxcb-xfixes0-dev libwebkit2gtk-4.1-dev libdbus-1-dev weston xvfb xauth mesa-vulkan-drivers pulseaudio pulseaudio-utils gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-pulseaudio
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libx11-dev libx11-xcb-dev libxcb-shape0-dev libxcb-xfixes0-dev libwebkit2gtk-4.1-dev libdbus-1-dev weston xvfb xauth mesa-vulkan-drivers pulseaudio pulseaudio-utils gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-pulseaudio
       - if: runner.os == 'Linux'
         name: Verify the bundled Rust media controller
         run: |
@@ -51,7 +51,7 @@ jobs:
       - name: Wayland and X11 graphics
         if: runner.os == 'Linux'
         run: bash tools/linux-display-test.sh target/debug/mitaka-plus build-test-data
-      - name: Play, pause and seek a real WAV through the media helper
+      - name: Play, pause and frame-seek PCM WAV and H.264 MP4
         shell: bash
         run: |
           player=target/debug/mitaka-media

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 実行ファイルを明示し、配布物でも同じWAV・親子通信・デコーダーを検証する。
+# 実行ファイルを明示し、配布物でも同じWAV・MP4・親子通信・デコーダーを検証する。
 set -euo pipefail
 player="${1:?mitaka-media のパスを指定してください}"
 shift

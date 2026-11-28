@@ -121,6 +121,59 @@ impl Drop for Worker {
 mod tests {
     use super::*;
     use serde_json::json;
+    const COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
+
+    fn wait(w: &mut Worker, stage: &str, timeout: Duration, done: impl Fn(&Value) -> bool) {
+        let start = std::time::Instant::now();
+        loop {
+            assert!(w.refresh().unwrap(), "{stage}: player closed");
+            if done(&w.state) {
+                eprintln!("{stage} after {:?}: {}", start.elapsed(), w.state);
+                return;
+            }
+            assert!(start.elapsed() < timeout, "{stage} timed out: {}", w.state);
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    fn seek_paused(w: &mut Worker, frame: u32) {
+        w.request(json!({"op":"frame","frame":frame})).unwrap();
+        wait(w, "seek frame", COMMAND_TIMEOUT, |s| {
+            s["playing"] == false && s["frame"] == frame
+        });
+    }
+
+    fn play_and_pause(w: &mut Worker, length: u32) {
+        let ended = |s: &Value| s["playing"] == false && s["frame"] == length;
+        for attempt in 1..=2 {
+            w.request(json!({"op":"play"})).unwrap();
+            // 巻き戻し後はデコーダーが冒頭を過ぎるまで待ち、実際に途中で停止させる。
+            let minimum_time = if attempt == 1 { 0.2 } else { 1. };
+            wait(w, "play", COMMAND_TIMEOUT, |s| {
+                (s["playing"] == true && s["seconds"].as_f64().unwrap() > minimum_time) || ended(s)
+            });
+            if !ended(&w.state) {
+                w.request(json!({"op":"pause"})).unwrap();
+                wait(w, "pause", COMMAND_TIMEOUT, |s| {
+                    s["playing"] == false && s["seconds"].as_f64().unwrap() > 0.2
+                });
+                if !ended(&w.state) {
+                    assert!((1..u64::from(length)).contains(&w.state["frame"].as_u64().unwrap()));
+                    return;
+                }
+            }
+
+            // 6秒の媒体が観測の間に自然終了した場合だけ、先頭の停止を確認して再生し直す。
+            assert!(
+                attempt == 1,
+                "playback ended twice before pause: {}",
+                w.state
+            );
+            eprintln!("playback ended before pause. Retrying from frame zero");
+            seek_paused(w, 0);
+        }
+    }
+
     #[test]
     #[ignore = "requires the built media player and a graphical desktop"]
     fn real_player_controls_the_selected_handle() {
@@ -143,46 +196,36 @@ mod tests {
             writer.write_sample(pcm).unwrap();
         }
         writer.finalize().unwrap();
-        let mut cases = vec![(wav, 96000)];
-        if let Some(path) = std::env::var_os("MITAKA_TEST_MEDIA_VIDEO") {
-            cases.push((path.into(), 90));
-        }
-        for (path, length) in cases {
+        let video = std::env::var_os("MITAKA_TEST_MEDIA_VIDEO")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/seek-15fps.mp4")
+            });
+        for (path, length) in [(wav, 96000), (video, 90)] {
+            eprintln!("testing {} frames from {}", length, path.display());
             let mut w = Worker::launch(Path::new(&exe), File::open(&path).unwrap(), &path).unwrap();
-            let wait =
-                |w: &mut Worker, stage: &str, timeout: Duration, done: &dyn Fn(&Value) -> bool| {
-                    let start = std::time::Instant::now();
-                    loop {
-                        assert!(w.refresh().unwrap());
-                        if done(&w.state) {
-                            eprintln!("{stage} completed in {:?}", start.elapsed());
-                            break;
-                        }
-                        assert!(
-                            start.elapsed() < timeout,
-                            "{stage} timed out: {:?}",
-                            w.state
-                        );
-                        std::thread::sleep(Duration::from_millis(100));
-                    }
-                };
             // 子プロセスはOSのWebView初期化に先立って接続先を通知する。
-            wait(&mut w, "open player", Duration::from_secs(90), &|s| {
+            wait(&mut w, "open player", Duration::from_secs(90), |s| {
                 s["ready"].as_u64().is_some_and(|n| n > 0)
             });
             assert_eq!(w.state["frameLength"], length);
-            let command_timeout = Duration::from_secs(15);
-            w.request(json!({"op":"play"})).unwrap();
-            wait(&mut w, "play", command_timeout, &|s| {
-                s["playing"] == true && s["seconds"].as_f64().unwrap() > 0.2
-            });
-            w.request(json!({"op":"pause"})).unwrap();
-            wait(&mut w, "pause", command_timeout, &|s| s["playing"] == false);
-            w.request(json!({"op":"frame","frame":length/2})).unwrap();
-            wait(&mut w, "seek frame", command_timeout, &|s| {
-                s["frame"] == length / 2
-            });
-            assert!((w.state["seconds"].as_f64().unwrap() - 3.).abs() < 1e-4);
+            assert_eq!(w.state["playing"], false);
+            assert_eq!(w.state["frame"], 0);
+            play_and_pause(&mut w, length);
+            // 遅い観測で既に中点で停止した場合も、実際に別フレームからシークする。
+            if w.state["frame"] == length / 2 {
+                seek_paused(&mut w, 0);
+            }
+            seek_paused(&mut w, length / 2);
+            assert!(
+                (w.state["seconds"].as_f64().unwrap() - 3.).abs() < 1e-4,
+                "seek result: {}",
+                w.state
+            );
+            eprintln!(
+                "seek verified at frame {} of {}, time {} s",
+                w.state["frame"], length, w.state["seconds"]
+            );
         }
     }
 }
