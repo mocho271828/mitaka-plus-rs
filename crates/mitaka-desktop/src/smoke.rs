@@ -223,7 +223,8 @@ impl Smoke {
                 app.view = View::Solar;
             }
             Scene::ObjectBrowser => {
-                self.browser_hip = Some(app.objects.inspect_star(data)?);
+                app.check_planet_browser_tracking(ctx)?;
+                self.browser_hip = Some(app.objects.inspect_star(app.data.as_ref().unwrap())?);
                 app.view = View::Sky;
             }
             Scene::Galaxy => {
