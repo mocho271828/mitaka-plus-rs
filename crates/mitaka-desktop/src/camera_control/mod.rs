@@ -420,7 +420,12 @@ impl App {
                 }
             }
             4 | 103 => {
-                if self.view != View::Solar || n <= 0. {
+                let flying =
+                    self.motion.physical_flight.is_some() || self.motion.journey.flight.is_some();
+                if self.view != View::Solar
+                    || n <= 0.
+                    || (!flying && (self.motion.site.is_some() || self.solar.stationary_surface()))
+                {
                     return Err("宇宙視点の正の距離を指定してください".into());
                 }
                 self.motion.zoom = Some(Scalar {

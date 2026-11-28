@@ -186,6 +186,22 @@ impl Smoke {
             Scene::ReferenceSurface => {
                 app.view = View::Solar;
                 app.solar.prepare(&data.ephemeris, app.jd)?;
+                // 基準球でも火星地表からの距離操作と、離陸中の許可条件を検査できる。
+                app.solar.approach(4)?;
+                app.nonterrain_mode(false, 0., true)?;
+                let msg = serde_json::json!({"duration":0., "enabled":false, "number":1.});
+                let distance = app.solar.camera.distance;
+                for kind in [4, 103] {
+                    if app.camera_action(kind, &msg, ctx).is_ok()
+                        || app.solar.camera.distance != distance
+                    {
+                        return Err(io::Error::other("火星の地表でカメラ距離が変化しました"));
+                    }
+                }
+                app.nonterrain_mode(true, 3., false)?;
+                app.camera_action(103, &msg, ctx)
+                    .map_err(io::Error::other)?;
+                app.motion = Default::default();
                 app.solar.approach(5)?;
                 app.nonterrain_mode(false, 0., true)?;
                 let ctx_value = serde_json::json!({"duration":0.,"enabled":true,"number":0.});
