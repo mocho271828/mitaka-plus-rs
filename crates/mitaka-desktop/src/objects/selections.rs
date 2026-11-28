@@ -24,7 +24,7 @@ impl Source {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Group(BTreeMap<String, (Source, BTreeSet<usize>)>);
 impl Group {
     fn json(&self, layer: &mut Value) {
@@ -111,7 +111,7 @@ impl Group {
         }
     }
 }
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct Selections {
     small: Group,
     satellites: Group,
@@ -140,6 +140,24 @@ impl Selections {
             g.toggle(src, ord, on)
         }
     }
+    pub(crate) fn rebind(&self, root: &Path) -> io::Result<Self> {
+        let mut result = Self::default();
+        for (kind, group) in [
+            (Kind::Small, &self.small),
+            (Kind::Satellites, &self.satellites),
+        ] {
+            if group.0.is_empty() {
+                continue;
+            }
+            let catalog = Catalog::load(kind, root)?;
+            for (src, ordinal) in (0..catalog.len()).filter_map(|i| catalog.identity(i)) {
+                if self.contains(kind, src, ordinal) {
+                    result.toggle(kind, src, ordinal, true);
+                }
+            }
+        }
+        Ok(result)
+    }
     pub(crate) fn apply_to(&self, state: &mut Value) {
         self.small.json(&mut state["small_bodies"]);
         self.satellites.json(&mut state["satellites"]);
@@ -155,6 +173,44 @@ impl Selections {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reload_matches_each_source_and_ordinal_for_small_bodies_and_satellites() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let asteroid = root.join("orbits/asteroids/example.dat");
+        std::fs::create_dir_all(asteroid.parent().unwrap()).unwrap();
+        std::fs::write(&asteroid, b"Name: A\nType: Asteroid\nNo: 1\nEpoch: 2451545\na: 1\nn: 90\ni: 0\nnode: 0\nw: 0\ne: 0\nM0: 0\n").unwrap();
+        let system = root.join("ssystem.dat");
+        std::fs::write(
+            &system,
+            b"Ssystem\n{\nPlanet\n{\nName: P\nSatellite\n{\nName: S\n}\n}\n}\n",
+        )
+        .unwrap();
+        let mut selected = Selections::default();
+        for kind in [Kind::Small, Kind::Satellites] {
+            let catalog = Catalog::load(kind, root).unwrap();
+            let (src, id) = catalog.identity(0).unwrap();
+            selected.toggle(kind, src, id, true);
+        }
+        let state = |set: &Selections| {
+            let mut v = json!({});
+            set.apply_to(&mut v);
+            v
+        };
+        let before = state(&selected);
+        assert_eq!(state(&selected.rebind(root).unwrap()), before);
+        let mut new_bytes = std::fs::read(&asteroid).unwrap();
+        new_bytes.push(b'\n');
+        std::fs::write(&asteroid, new_bytes).unwrap();
+        let changed = state(&selected.rebind(root).unwrap());
+        assert_eq!(changed["small_bodies"]["selected_ids"], json!([]));
+        assert_eq!(changed["satellites"], before["satellites"]);
+        std::fs::remove_file(system).unwrap();
+        assert_eq!(
+            state(&selected.rebind(root).unwrap())["satellites"]["selected_ids"],
+            json!([])
+        );
+    }
     #[test]
     #[ignore = "実カタログの元バイトの照合を行う"]
     fn source_fingerprints_restore_only_exact_original_records() {
