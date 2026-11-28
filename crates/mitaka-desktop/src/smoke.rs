@@ -183,6 +183,7 @@ impl Smoke {
             }
             Scene::Solar => {
                 solar_input::check_tracking(data)?;
+                solar_input::check_surface(data)?;
                 // 単なるエラー文を描画成功として数えない。
                 app.solar.prepare(&data.ephemeris, app.jd)?;
                 app.view = View::Solar;

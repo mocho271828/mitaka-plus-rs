@@ -624,24 +624,31 @@ impl Solar {
             ui.allocate_painter(ui.available_size(), egui::Sense::click_and_drag());
         let rect = response.rect;
         let modifiers = ui.input(|i| i.modifiers);
-        let has_site = surface_site.is_some();
-        let on_surface = surface_site
+        let observer_site = surface_site.filter(|site| site.body == self.selected);
+        let has_site = observer_site.is_some();
+        let on_surface = observer_site
             .as_ref()
-            .is_some_and(|s| s.body == self.selected && s.height <= 0.002000001);
-        if response.dragged() && on_surface {
-            let s = surface_site.unwrap();
-            let d = response.drag_delta();
-            if modifiers.alt {
-                s.roll = (s.roll + f64::from(d.x) * 0.35) % 360.;
+            .is_some_and(|site| site.height <= 0.002000001);
+        if let Some(site) = observer_site {
+            let drag = response.drag_delta();
+            let zoom = if response.hovered() {
+                ui.input(surface_flight::height_factor)
             } else {
-                s.heading = (s.heading + f64::from(d.x) * 0.35).rem_euclid(360.);
-                s.elevation = (s.elevation + f64::from(d.y) * 0.35).clamp(-90., 90.);
+                1.
+            };
+            let look = response.dragged() && !modifiers.alt;
+            if look || zoom != 1. {
+                if look {
+                    site.heading = (site.heading - f64::from(drag.x) * 0.35).rem_euclid(360.);
+                    site.elevation = (site.elevation + f64::from(drag.y) * 0.35).clamp(-90., 90.);
+                }
+                site.height = (site.height * zoom).clamp(0.002, 1e9);
+                site.pose(
+                    self.body_point(site.body).unwrap().into(),
+                    jd,
+                    &mut self.camera,
+                )?;
             }
-            s.pose(
-                self.body_point(s.body).unwrap().into(),
-                jd,
-                &mut self.camera,
-            )?;
         } else if response.dragged() {
             if !self.tracking.earth_moon() {
                 self.stop();
@@ -664,7 +671,7 @@ impl Solar {
                 self.camera.orbit(f64::from(d.x), f64::from(d.y));
             }
         }
-        if response.hovered() {
+        if response.hovered() && !has_site {
             let factor = ui.input(|i| {
                 (-i.smooth_scroll_delta.y * 0.008).clamp(-2., 2.).exp() / i.zoom_delta()
             });
@@ -672,17 +679,13 @@ impl Solar {
                 if self.flying() || self.flight_site.is_some() {
                     self.stop();
                 }
-                if on_surface {
-                    self.camera.fov = (self.camera.fov * f64::from(factor)).clamp(0.001, 90.);
+                let min = if self.tracking.earth_moon() {
+                    0.0002
                 } else {
-                    let min = if self.tracking.earth_moon() {
-                        0.0002
-                    } else {
-                        *self.camera.distance_range().start()
-                    };
-                    self.camera.distance = (self.camera.distance * f64::from(factor))
-                        .clamp(min, 1e40 * precise::AU_PER_PC);
-                }
+                    *self.camera.distance_range().start()
+                };
+                self.camera.distance = (self.camera.distance * f64::from(factor))
+                    .clamp(min, 1e40 * precise::AU_PER_PC);
             }
         }
         if self.tick_surface(jd)? {

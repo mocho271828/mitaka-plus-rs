@@ -152,6 +152,30 @@ impl Overlay {
     }
 }
 
+/// SolarSystemView.mm のホイール単位とピンチを観測地点の高度倍率にする。
+pub(super) fn height_factor(input: &eframe::egui::InputState) -> f64 {
+    use eframe::egui::{Event, MouseWheelUnit};
+    let mut delta = 0.;
+    for event in &input.events {
+        if let Event::MouseWheel {
+            unit,
+            delta: wheel,
+            modifiers,
+        } = event
+        {
+            // egui は修飾キーつきホイールの倍率を zoom_delta に含める。
+            if !modifiers.ctrl && !modifiers.command {
+                let scale = match unit {
+                    MouseWheelUnit::Point => 0.012,
+                    MouseWheelUnit::Line | MouseWheelUnit::Page => 0.1,
+                };
+                delta += f64::from(wheel.y) * scale;
+            }
+        }
+    }
+    delta.clamp(-100., 100.).exp() / f64::from(input.zoom_delta())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
