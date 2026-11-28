@@ -238,6 +238,56 @@ impl Media {
             }
         }
     }
+    fn preview_contents(&mut self, ui: &mut egui::Ui) {
+        if let Some(i) = self.active {
+            let e = &self.registrations.entries[i];
+            ui.label(&e.name);
+            if let Some(g) = &e.grant {
+                ui.label(g.path.display().to_string());
+            }
+        }
+        if let Some(img) = &mut self.image {
+            img.show(ui);
+        }
+        if self.loading.is_some() {
+            ui.spinner();
+        }
+        self.playback_ui(ui);
+        if !self.status.is_empty() {
+            ui.label(&self.status);
+        }
+    }
+    fn preview_window(&mut self, ctx: &egui::Context) {
+        let mut open = true;
+        if self.active_kind() == Some(Kind::Image) {
+            ctx.show_viewport_immediate(
+                egui::ViewportId::from_hash_of("mitaka-image-preview"),
+                egui::ViewportBuilder::default()
+                    .with_title("Mitaka Plus — 画像プレビュー")
+                    .with_inner_size([600., 540.])
+                    .with_min_inner_size([320., 280.]),
+                |child, class| {
+                    if class == egui::ViewportClass::Embedded {
+                        egui::Window::new("画像プレビュー")
+                            .open(&mut open)
+                            .show(child, |ui| self.preview_contents(ui));
+                    } else if child.input(|i| i.viewport().close_requested()) {
+                        open = false;
+                    } else {
+                        egui::CentralPanel::default().show(child, |ui| self.preview_contents(ui));
+                    }
+                },
+            );
+        } else {
+            egui::Window::new("メディアのプレビュー")
+                .open(&mut open)
+                .default_width(520.)
+                .show(ctx, |ui| self.preview_contents(ui));
+        }
+        if !open {
+            self.close();
+        }
+    }
     pub fn frame(&mut self, ctx: &egui::Context) {
         if let Some(rx) = &self.loading {
             match rx.try_recv() {
@@ -278,31 +328,8 @@ impl Media {
             ctx.request_repaint_after(Duration::from_millis(180));
         }
         self.registrations_ui(ctx);
-        let mut open = self.open;
-        egui::Window::new("メディアのプレビュー")
-            .open(&mut open)
-            .default_width(520.)
-            .show(ctx, |ui| {
-                if let Some(i) = self.active {
-                    let e = &self.registrations.entries[i];
-                    ui.label(&e.name);
-                    if let Some(g) = &e.grant {
-                        ui.label(g.path.display().to_string());
-                    }
-                }
-                if let Some(img) = &mut self.image {
-                    img.show(ui);
-                }
-                if self.loading.is_some() {
-                    ui.spinner();
-                }
-                self.playback_ui(ui);
-                if !self.status.is_empty() {
-                    ui.label(&self.status);
-                }
-            });
-        if self.open && !open {
-            self.close();
+        if self.open {
+            self.preview_window(ctx);
         }
         let mut sound = self.sound;
         egui::Window::new("サウンドコントローラー")

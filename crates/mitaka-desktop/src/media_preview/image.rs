@@ -138,7 +138,11 @@ impl Preview {
         }
     }
     pub fn show(&mut self, ui: &mut egui::Ui) {
-        let size = egui::vec2(ui.available_width().max(160.), 300.);
+        let controls_height = 4. * (ui.spacing().interact_size.y + ui.spacing().item_spacing.y);
+        let size = egui::vec2(
+            ui.available_width(),
+            (ui.available_height() - controls_height).max(32.),
+        );
         let (area, response) = ui.allocate_exact_size(size, egui::Sense::drag());
         if response.dragged() {
             self.pan += response.drag_delta();
@@ -189,5 +193,120 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
         std::fs::write(&path, &bytes[..bytes.len() - 1]).unwrap();
         assert!(load(&path).is_err());
+    }
+    #[test]
+    fn native_image_window_tracks_transforms_close_lua_and_data_reset() {
+        use super::super::{Entry, Grant, Media};
+        use egui::{Color32, Rect, ViewportEvent, ViewportId};
+        use serde_json::json;
+        use std::{cell::Cell, rc::Rc};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("preview.png");
+        image::RgbaImage::from_pixel(8, 4, image::Rgba([12, 34, 56, 255]))
+            .save(&path)
+            .unwrap();
+        let ctx = egui::Context::default();
+        ctx.set_embed_viewports(false);
+        let mut media = Media::default();
+        media
+            .registrations
+            .entries
+            .push(Entry::direct(Grant::open(&path).unwrap()));
+        let script = |m: &mut Media, command, value| {
+            m.script(
+                &json!({"family":"Images","command":command,"key":"visible","value":value}),
+                &ctx,
+            )
+            .unwrap()["value"]
+                .clone()
+        };
+        script(&mut media, "set", json!(true));
+        let mut preview = Preview::new(&ctx, load(&path).unwrap());
+        let texture_id = preview.texture.id();
+        preview.zoom = 0.5;
+        preview.opacity = 0.5;
+        media.loading = None;
+        media.image = Some(preview);
+
+        let close = Rc::new(Cell::new(false));
+        let draws = Rc::new(Cell::new(0));
+        let bounds = Rc::new(Cell::new(Rect::NOTHING));
+        let id = ViewportId::from_hash_of("mitaka-image-preview");
+        egui::Context::set_immediate_viewport_renderer({
+            let (close, draws, bounds) = (close.clone(), draws.clone(), bounds.clone());
+            move |ctx, mut viewport| {
+                assert_eq!(viewport.ids.this, id);
+                assert_eq!(viewport.ids.parent, ViewportId::ROOT);
+                draws.set(draws.get() + 1);
+                let mut input = egui::RawInput {
+                    viewport_id: id,
+                    screen_rect: Some(Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(600., 540.),
+                    )),
+                    ..Default::default()
+                };
+                let info = input.viewports.entry(id).or_default();
+                info.parent = Some(ViewportId::ROOT);
+                if close.get() {
+                    info.events.push(ViewportEvent::Close);
+                }
+                let output = ctx.run(input, |child| (viewport.viewport_ui_cb)(child));
+                for primitive in ctx.tessellate(output.shapes, output.pixels_per_point) {
+                    if let egui::epaint::Primitive::Mesh(m) = primitive.primitive {
+                        if m.texture_id == texture_id {
+                            assert!(m
+                                .vertices
+                                .iter()
+                                .all(|v| v.color == Color32::from_white_alpha(128)));
+                            bounds.set(m.calc_bounds());
+                        }
+                    }
+                }
+            }
+        });
+        let frame = |m: &mut Media| {
+            let _ = ctx.run(Default::default(), |ctx| m.frame(ctx));
+        };
+        frame(&mut media);
+        assert_eq!(script(&mut media, "get", json!(null)), true);
+        let first = bounds.get();
+        assert!(first.width() > first.height() && first.width() > 32.);
+        let preview = media.image.as_mut().unwrap();
+        preview.zoom *= 0.5;
+        preview.angle = 90.;
+        preview.pan = egui::vec2(12., 8.);
+        frame(&mut media);
+        let second = bounds.get();
+        assert!((second.width() - first.height() / 2.).abs() < 0.1);
+        assert!((second.height() - first.width() / 2.).abs() < 0.1);
+        assert!(
+            second
+                .center()
+                .distance(first.center() + egui::vec2(12., 8.))
+                < 0.1
+        );
+
+        close.set(true);
+        frame(&mut media);
+        assert_eq!(script(&mut media, "get", json!(null)), false);
+        assert!(media.image.is_none());
+        let count = draws.get();
+        frame(&mut media);
+        assert_eq!(draws.get(), count);
+
+        close.set(false);
+        script(&mut media, "set", json!(true));
+        frame(&mut media);
+        assert!(draws.get() > count);
+        script(&mut media, "set", json!(false));
+        assert_eq!(script(&mut media, "get", json!(null)), false);
+        script(&mut media, "set", json!(true));
+        media.reset(dir.path());
+        let count = draws.get();
+        frame(&mut media);
+        assert_eq!(draws.get(), count);
+        assert_eq!(script(&mut media, "get", json!(null)), false);
     }
 }
