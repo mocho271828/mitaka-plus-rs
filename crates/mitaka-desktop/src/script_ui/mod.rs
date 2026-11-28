@@ -553,6 +553,16 @@ if check_month_end then
     Time.step = step
 end
 if check_2000_dates then
+    Time.JD = 2451545
+    Time.speed = 2
+    Time:setJDTo(2451549,0.1)
+    assert(Time.speed == 2)
+    for i = 1,40 do
+        if Time.JD > 2451549 then break end
+        waitTime(0.025)
+    end
+    assert(Time.JD > 2451549 and Time.speed == 2)
+    Time.speed = 0
     Time:setTime(2000,2,30,3,4,5)
     assert(Time:getTimeString() == '2000,3,1,3,4,5')
     Time.min = 61
