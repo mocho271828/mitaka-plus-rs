@@ -435,17 +435,36 @@ impl App {
                 }
             }
             4 | 103 => {
-                let flying =
-                    self.motion.physical_flight.is_some() || self.motion.journey.flight.is_some();
+                let flying = self.solar.flying()
+                    || self.motion.physical_flight.is_some()
+                    || self.motion.journey.flight.is_some();
                 if self.view != View::Solar
-                    || n <= 0.
                     || (!flying && (self.motion.site.is_some() || self.solar.stationary_surface()))
                 {
-                    return Err("宇宙視点の正の距離を指定してください".into());
+                    return Err("地表停止中は距離ズームを使えません".into());
+                }
+                let leaving_navigation =
+                    flying || self.motion.free_physical || self.solar.flight_site.is_some();
+                let mut camera = self.solar.camera;
+                if leaving_navigation && camera.frame.is_some() {
+                    camera.frame_is_orbit = true;
+                }
+                let valid = camera.distance_range();
+                if !valid.contains(&n) || !valid.contains(&camera.distance) {
+                    return Err("カメラ距離が範囲外です".into());
+                }
+                if leaving_navigation {
+                    self.motion.stop_motion(&mut self.solar);
+                    self.motion.site = None;
+                    self.motion.free_physical = false;
+                    self.solar.camera = camera;
+                }
+                if let Some(target) = &mut self.motion.target {
+                    target.distance = None;
                 }
                 self.motion.zoom = Some(Scalar {
-                    a: self.solar.camera.distance,
-                    b: n.clamp(0.000005, 648000. / std::f64::consts::PI * 1e9),
+                    a: camera.distance,
+                    b: n,
                     time: Interval {
                         smooth: false,
                         ..time

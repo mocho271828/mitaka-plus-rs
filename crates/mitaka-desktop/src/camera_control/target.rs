@@ -139,7 +139,7 @@ pub(super) struct Tracking {
     view: View,
     time: Interval,
     from: [f64; 3],
-    dist: [f64; 2],
+    pub(super) distance: Option<[f64; 2]>,
     aim: [f64; 2],
     last: Option<[f64; 3]>,
     follow: bool,
@@ -179,8 +179,8 @@ impl Tracking {
                         app.solar.camera.set_target_pc(target.pc);
                     }
                 }
-                if self.last.is_none() {
-                    app.solar.camera.distance = self.dist[0] * (1. - t) + self.dist[1] * t;
+                if let Some([start, end]) = self.distance {
+                    app.solar.camera.distance = start * (1. - t) + end * t;
                 }
             } else {
                 let [az, alt] = self.object.horizontal(app)?;
@@ -205,6 +205,7 @@ impl Tracking {
             return false;
         }
         if done {
+            self.distance = None;
             self.last = Some(epoch);
         }
         !done || self.follow
@@ -344,7 +345,7 @@ impl App {
                 ..time
             },
             from,
-            dist: [d, dest],
+            distance: Some([d, dest]),
             aim: ground.map_or([self.horizon.longitude, self.horizon.latitude], |s| {
                 [s.heading, s.elevation]
             }),

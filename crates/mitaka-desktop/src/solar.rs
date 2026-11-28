@@ -187,6 +187,15 @@ impl SolarCamera {
             [cp * cy, cp * sy, sp],
         ]
     }
+    pub(crate) fn distance_range(self) -> std::ops::RangeInclusive<f64> {
+        let min = if self.frame.is_some() && !self.frame_is_orbit {
+            1e-12
+        } else {
+            5e-6
+        };
+        min..=1e40 * precise::AU_PER_PC
+    }
+
     pub(crate) fn near_plane(self) -> f64 {
         if self.frame.is_some() && !self.frame_is_orbit {
             1e-12
@@ -485,6 +494,9 @@ impl Solar {
         }
         Ok(())
     }
+    pub(crate) fn flying(&self) -> bool {
+        self.flight.is_some() || self.surface_flight.is_some()
+    }
     pub(crate) fn stationary_surface(&self) -> bool {
         // flight_site は離陸後も残り、次の着陸の開始位置として使われる。
         self.landed.is_some()
@@ -665,10 +677,8 @@ impl Solar {
                 } else {
                     let min = if self.tracking.earth_moon() {
                         0.0002
-                    } else if self.camera.frame.is_some() && !self.camera.frame_is_orbit {
-                        1e-12
                     } else {
-                        0.000005
+                        *self.camera.distance_range().start()
                     };
                     self.camera.distance = (self.camera.distance * f64::from(factor))
                         .clamp(min, 1e40 * precise::AU_PER_PC);
