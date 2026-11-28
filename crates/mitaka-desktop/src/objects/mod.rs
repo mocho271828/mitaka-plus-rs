@@ -5,6 +5,7 @@ mod depth;
 pub(crate) mod display;
 pub(crate) mod horizon;
 mod layers;
+mod orbit;
 mod satellite;
 mod search;
 pub(crate) mod selections;
@@ -483,7 +484,11 @@ mod tests {
                 Kind::Small => {
                     let path = c.small_path(i, display::Sampling::default()).unwrap();
                     assert_eq!(path.len(), 201);
-                    let points: Vec<_> = path.iter().copied().collect::<Option<_>>().unwrap();
+                    let points: Vec<_> = path
+                        .iter()
+                        .map(|s| s.position)
+                        .collect::<Option<_>>()
+                        .unwrap();
                     assert!(points[0]
                         .iter()
                         .zip(*points.last().unwrap())

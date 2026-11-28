@@ -71,7 +71,7 @@ pub(super) struct Catalog {
     paths: std::cell::RefCell<PathCache>,
     positions: std::cell::RefCell<Positions>,
 }
-type OrbitPath = std::sync::Arc<[Option<[f64; 3]>]>;
+type OrbitPath = std::sync::Arc<[super::orbit::Sample]>;
 #[derive(Default)]
 struct PathCache {
     sampling: super::display::Sampling,
@@ -540,11 +540,14 @@ impl Catalog {
             .or_insert_with(|| self.build_small_path(i, sampling))
             .clone()
     }
-    fn build_small_path(&self, i: usize, sampling: super::display::Sampling) -> Option<OrbitPath> {
+    pub(super) fn small_record(&self, i: usize) -> Option<&small_body::Record> {
         let (Store::Small(d), Key::Small(src, r)) = (&self.store, &self.rows.get(i)?.target) else {
             return None;
         };
-        let record = &d.sources[*src].records[*r];
+        Some(&d.sources[*src].records[*r])
+    }
+    fn build_small_path(&self, i: usize, sampling: super::display::Sampling) -> Option<OrbitPath> {
+        let record = self.small_record(i)?;
         let dates = match record.orbit {
             small_body::Orbit::Mean(e) if e.eccentricity < 1. => {
                 let phase = e.mean_anomaly_deg.rem_euclid(360.);
@@ -570,7 +573,15 @@ impl Catalog {
         if dates.windows(2).any(|p| !p[0].is_finite() || p[1] <= p[0]) {
             return None;
         }
-        Some(dates.into_iter().map(|t| record.position(t).ok()).collect())
+        Some(
+            dates
+                .into_iter()
+                .map(|jd| super::orbit::Sample {
+                    jd,
+                    position: record.position(jd).ok(),
+                })
+                .collect(),
+        )
     }
     pub(super) fn satellite_source(&self, row: usize) -> Option<usize> {
         if let Key::Satellite(source, _) = self.rows.get(row)?.target {

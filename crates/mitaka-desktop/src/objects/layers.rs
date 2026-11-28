@@ -99,8 +99,18 @@ impl Overlay<'_> {
                     self.catalog.satellite_path(i, &self.sky.ephemeris, self.jd)
                 {
                     ctx.path(path.iter().copied().map(Some), path_color);
-                } else if let Some(path) = self.catalog.small_path(i, self.display.sampling) {
-                    ctx.path(path.iter().copied(), path_color);
+                } else if let (Some(record), Some(path)) = (
+                    self.catalog.small_record(i),
+                    self.catalog.small_path(i, self.display.sampling),
+                ) {
+                    let curve = super::orbit::Curve {
+                        record,
+                        camera: ctx.camera,
+                        rect: ctx.rect,
+                    };
+                    curve.visit(&path, self.jd, p, |a, b| {
+                        ctx.path([Some(a), Some(b)], path_color)
+                    });
                 }
             }
             if options.points || options.labels {
