@@ -143,7 +143,7 @@ impl App {
                 .as_ref()
                 .ok_or_else(|| io::Error::other("天体データがありません"))?
                 .ephemeris;
-            let center = crate::solar::planet(ephemeris, site.body - 1, self.jd)?;
+            let center = crate::solar::surface_center(ephemeris, site.body, self.jd)?;
             site.pose(center.into(), self.jd, &mut c)?;
             Some(site)
         } else {

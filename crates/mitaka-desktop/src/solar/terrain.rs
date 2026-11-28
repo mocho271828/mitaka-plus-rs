@@ -10,7 +10,7 @@ pub(super) fn eye(camera: SolarCamera, center: Point, radius: f64) -> DVec3 {
         / radius
 }
 pub(super) fn near(camera: SolarCamera, center: Point, body: usize) -> bool {
-    if !matches!(body, 3 | 4) {
+    if crate::surface::terrain_file(body).is_none() {
         return false;
     }
     let distance = eye(camera, center, RADII_KM[body] / KM_PER_AU).length();
@@ -31,6 +31,42 @@ impl Default for Sample {
         }
     }
 }
+/// 欠測・破損した地形でも通常の天体描画と選択深度を保持する。
+pub(super) struct Layer {
+    source: Option<Source>,
+    file: &'static str,
+    pub warning: Option<String>,
+}
+impl Layer {
+    pub fn open(root: &Path, body: usize) -> Self {
+        let file = crate::surface::terrain_file(body).expect("terrain candidate has a source path");
+        let result = Source::open(root, body);
+        let warning = result
+            .as_ref()
+            .err()
+            .filter(|e| e.kind() != io::ErrorKind::NotFound)
+            .map(|e| format!("{file}: {e}（基準球面で表示）"));
+        Self {
+            source: result.ok(),
+            file,
+            warning,
+        }
+    }
+    pub fn render(
+        &mut self,
+        view: &View,
+        mode: Amplification,
+        preview: bool,
+    ) -> Option<Vec<Sample>> {
+        // 描画の資源上限は視点に依存するので、次の視点では同じ地形を再評価する。
+        let result = self.source.as_mut()?.render(view, mode, preview);
+        self.warning = result
+            .as_ref()
+            .err()
+            .map(|e| format!("{}: {e}（基準球面で表示）", self.file));
+        result.ok()
+    }
+}
 pub(super) struct Source {
     source: Terrain,
     unit_radius: f64,
@@ -40,12 +76,9 @@ pub(super) struct Source {
 }
 impl Source {
     pub fn open(root: &Path, index: usize) -> io::Result<Self> {
-        let name = match index {
-            3 => "earth_topo",
-            4 => "mars_topo",
-            _ => return Err(io::Error::other("terrain body must be Earth or Mars")),
-        };
-        let mut source = Terrain::open(&root.join(name).join(format!("{name}.dat")))?;
+        let file = crate::surface::terrain_file(index)
+            .ok_or_else(|| io::Error::other("この天体の地形データには対応していません"))?;
+        let mut source = Terrain::open(&root.join(file))?;
         let unit_radius = source.grid(0, 0)?.unit_m / source.radius_m();
         Ok(Self {
             source,
@@ -300,8 +333,95 @@ mod tests {
     use super::*;
     const AXES: [Point; 3] = [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]];
     #[test]
+    fn optional_moon_and_mercury_sources_supply_heights_and_surface_depth() {
+        use crate::solar::{sphere, Scene};
+        use eframe::egui::{self, Pos2, Rect};
+        let jd = crate::J2000;
+        for (body, file) in [(10, "moon_topo.dat"), (1, "mercury_topo.dat")] {
+            let root = tempfile::tempdir().unwrap();
+            let radius = RADII_KM[body] / KM_PER_AU;
+            let mut scene = Scene {
+                jd,
+                bodies: [[0.; 3]; 11],
+                orbits: vec![],
+                jupiter_casters: vec![],
+                eclipse_warnings: vec![],
+                satellite_positions_checked: true,
+            };
+            scene.bodies[body] = [0.5, 0.3, 0.01];
+            let axes = if body == 10 {
+                mitaka_core::lunar::lunar_orientation(jd).unwrap()
+            } else {
+                mitaka_core::rotation::planet_orientation(0, jd).unwrap()
+            };
+            let camera = SolarCamera {
+                target: scene.bodies[body],
+                frame: Some([axes[1], axes[2], axes[0]]),
+                distance: 2. * radius,
+                ..Default::default()
+            };
+            let rect = Rect::from_min_size(Pos2::ZERO, egui::vec2(65., 65.));
+            for supplied in ["absent", "truncated", "ready"] {
+                if supplied == "truncated" {
+                    std::fs::write(root.path().join(file), [1u8, 2]).unwrap();
+                } else if supplied == "ready" {
+                    crate::smoke::terrain::write_tile(root.path(), body).unwrap();
+                }
+                let relief = crate::surface::Surface::load_optional(
+                    root.path(),
+                    body,
+                    0.,
+                    0.,
+                    Amplification::Actual,
+                );
+                if supplied == "truncated" {
+                    assert!(relief.is_err());
+                } else {
+                    assert_eq!(
+                        relief.unwrap().map(|m| m.central_height),
+                        (supplied == "ready").then_some(400.)
+                    );
+                }
+                let mut surfaces = sphere::Surfaces::new();
+                surfaces.eclipse.shadows = false;
+                let ctx = egui::Context::default();
+                let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                    let painter = ctx.layer_painter(egui::LayerId::background());
+                    assert!(surfaces
+                        .draw(
+                            &painter,
+                            root.path(),
+                            camera,
+                            &scene,
+                            body,
+                            sphere::Region {
+                                viewport: rect,
+                                tile: rect
+                            }
+                        )
+                        .unwrap());
+                });
+                assert_eq!(
+                    surfaces.warnings().any(|s| s.starts_with(file)),
+                    supplied == "truncated"
+                );
+                let want = radius
+                    - if supplied == "ready" {
+                        0.4 / KM_PER_AU
+                    } else {
+                        0.
+                    };
+                let depth = surfaces.body_depth_at(body, rect.center());
+                assert!(
+                    (depth - want).abs() < 1e-13,
+                    "{body}, {supplied}: {depth} vs {want}"
+                );
+            }
+        }
+    }
+    #[test]
     fn six_degree_switch_matches_native_and_ignores_other_bodies() {
-        for body in [3, 4] {
+        for body in [1, 3, 4, 10] {
             let radius = RADII_KM[body] / KM_PER_AU;
             for (distance, want) in [(6., true), (9.51, true), (9.52, false), (0., false)] {
                 let c = SolarCamera {
