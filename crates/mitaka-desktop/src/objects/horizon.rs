@@ -73,7 +73,7 @@ impl Browser {
             if !self.display.group_visible(kind) {
                 continue;
             }
-            let Some(catalog) = self.scene_catalog(kind, &sky.root, canvas.painter.ctx()) else {
+            let Some(catalog) = self.scene_catalog(kind, sky, canvas.painter.ctx()) else {
                 continue;
             };
             let cached = &mut self.horizon.catalogues[slot];

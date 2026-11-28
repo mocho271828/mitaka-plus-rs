@@ -210,7 +210,7 @@ impl Chart<'_> {
         if !options.layers.stars {
             return;
         }
-        for star in &data.stars {
+        for star in data.stars.iter() {
             if star.magnitude > options.magnitude {
                 continue;
             }

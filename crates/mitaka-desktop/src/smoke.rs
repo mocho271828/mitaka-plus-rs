@@ -84,6 +84,7 @@ pub struct Smoke {
     scenes: Vec<Scene>,
     index: usize,
     entered: bool,
+    browser_hip: Option<i32>,
     waiting: bool,
     start: Instant,
     result: mpsc::Sender<Result<(), String>>,
@@ -113,6 +114,7 @@ impl Smoke {
                 ],
                 index: 0,
                 entered: false,
+                browser_hip: None,
                 waiting: false,
                 start: Instant::now(),
                 result: tx,
@@ -220,10 +222,8 @@ impl Smoke {
                 app.view = View::Solar;
             }
             Scene::ObjectBrowser => {
-                if !data.root.join("star_names_HIP.dat").try_exists()? {
-                    return Ok(false);
-                }
-                app.objects.inspect_sirius(data)?;
+                app.check_planet_browser_tracking(ctx)?;
+                self.browser_hip = Some(app.objects.inspect_star(app.data.as_ref().unwrap())?);
                 app.view = View::Sky;
             }
             Scene::Galaxy => {
@@ -311,10 +311,18 @@ impl Smoke {
                 return Ok(false);
             }
         }
-        if scene == Scene::ObjectBrowser && app.selected != Some(32349) {
-            return Err(io::Error::other(
-                "シリウスに対応するHIP 32349へ視点が移りません",
-            ));
+        if scene == Scene::ObjectBrowser {
+            let data = app.data.as_ref().unwrap();
+            let hip = self.browser_hip.unwrap();
+            let star = &data.stars[data.by_hip[&hip]];
+            if app.selected != Some(hip)
+                || app.sky.longitude != f64::from(star.ra_deg)
+                || app.sky.latitude != f64::from(star.dec_deg)
+            {
+                return Err(io::Error::other(format!(
+                    "天体ブラウザからHIP {hip} へ視点が移りません"
+                )));
+            }
         }
         if scene == Scene::SpacecraftPaths && app.view != View::Solar {
             return Err(io::Error::other("探査機位置へ視点が移りません"));

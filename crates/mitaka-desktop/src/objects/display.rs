@@ -173,16 +173,18 @@ impl Catalogs {
     pub fn get(
         &mut self,
         kind: Kind,
-        root: &Path,
+        sky: &crate::catalog::SkyData,
         ctx: &egui::Context,
     ) -> Result<Option<Rc<Catalog>>, String> {
+        let root = &sky.root;
         self.ensure_root(root);
         let entry = self.entries.entry(kind).or_insert_with(|| {
             let (tx, rx) = mpsc::channel();
             let root = root.to_owned();
             let ctx = ctx.clone();
+            let stars = (kind == Kind::Stars).then(|| sky.stars.clone());
             std::thread::spawn(move || {
-                let _ = tx.send(Catalog::load(kind, &root));
+                let _ = tx.send(Catalog::load_with_stars(kind, &root, stars.as_deref()));
                 ctx.request_repaint();
             });
             Entry::Pending(rx)

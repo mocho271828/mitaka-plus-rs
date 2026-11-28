@@ -17,17 +17,84 @@ fn marker(painter: &egui::Painter, p: Pos2, name: &str) {
     }
 }
 impl App {
+    pub(crate) fn check_planet_browser_tracking(
+        &mut self,
+        ctx: &egui::Context,
+    ) -> std::io::Result<()> {
+        let sky = self
+            .data
+            .as_ref()
+            .ok_or_else(|| std::io::Error::other("天体データが必要です"))?;
+        let initial = self.jd;
+        let next = if initial < sky.date_range[1] {
+            (initial + 1.).min(sky.date_range[1])
+        } else {
+            (initial - 1.).max(sky.date_range[0])
+        };
+        self.objects.inspect(sky, super::Kind::Planets, "Mars")?;
+        self.objects.open = false;
+        self.view = View::Solar;
+        self.object_panels(ctx);
+        let approach = crate::solar::Solar::body_distance(4);
+        if self.solar.selected != 4 || self.solar.camera.distance != approach {
+            return Err(std::io::Error::other("火星の初回選択時に接近できません"));
+        }
+        // ホイール操作は太陽系ビュー側の追従を止める。ブラウザの日時追従は引き続き有効。
+        self.solar.stop();
+        let user_distance = 2. * approach;
+        self.solar.camera.distance = user_distance;
+        self.apply_date(next).map_err(std::io::Error::other)?;
+        self.object_panels(ctx);
+        if self.solar.camera.distance != user_distance
+            || Some(self.solar.camera.target) != self.solar.body_point(4)
+        {
+            return Err(std::io::Error::other(format!(
+                "日時追従後の火星の距離 {} AU (期待値 {user_distance} AU)",
+                self.solar.camera.distance
+            )));
+        }
+        self.apply_date(initial).map_err(std::io::Error::other)
+    }
     pub(crate) fn object_panels(&mut self, ctx: &egui::Context) {
         let Some(data) = self.data.as_ref() else {
             return;
         };
-        let Some(target) = self
-            .objects
-            .panel(ctx, data, [self.jd, self.latitude, self.longitude])
+        let Some((target, focus)) =
+            self.objects
+                .panel(ctx, data, [self.jd, self.latitude, self.longitude])
         else {
             return;
         };
         match target {
+            Position::Planet(id) => {
+                self.selected = None;
+                if matches!(self.view, View::Solar | View::Surface) || id == 3 {
+                    let approach = focus || self.view != View::Solar;
+                    let result = self
+                        .solar
+                        .prepare(&data.ephemeris, self.jd)
+                        .and_then(|_| self.solar.focus_body(id, approach));
+                    match result {
+                        Ok(()) if approach => {
+                            self.motion = Default::default();
+                            self.view = View::Solar;
+                        }
+                        Ok(()) => {}
+                        Err(e) => self.error = Some(e.to_string()),
+                    }
+                } else {
+                    match crate::planet_layers::positions(&data.ephemeris, self.jd) {
+                        Ok(bodies) => {
+                            if let Some(body) = bodies.iter().find(|b| b.id == id) {
+                                self.solar.layers.visible = true;
+                                self.solar.layers.select(self.view, Some(id));
+                                self.center_object_chart(body.equatorial);
+                            }
+                        }
+                        Err(e) => self.error = Some(e.to_string()),
+                    }
+                }
+            }
             Position::Sky(coords, hip) => {
                 self.selected = hip;
                 match self.objects.kind {
@@ -52,21 +119,8 @@ impl App {
                 {
                     self.options.magnitude = self.options.magnitude.max(s.magnitude);
                 }
-                let (view, coords) = if self.view == View::Horizon {
-                    match ObservationFrame::new(self.latitude, self.longitude, self.jd)
-                        .and_then(|f| f.to_horizontal(coords[0], coords[1]))
-                    {
-                        Ok(horizontal) => (View::Horizon, horizontal),
-                        Err(e) => {
-                            self.error = Some(e.to_string());
-                            return;
-                        }
-                    }
-                } else {
-                    (View::Sky, coords)
-                };
-                self.view = view;
-                self.camera().center(view, coords);
+                self.solar.layers.select(self.view, None);
+                self.center_object_chart(coords);
             }
             Position::Solar(point, _)
                 if self.view == View::Horizon
@@ -103,6 +157,23 @@ impl App {
             }
         }
     }
+    fn center_object_chart(&mut self, coords: [f64; 2]) {
+        let (view, coords) = if self.view == View::Horizon {
+            match ObservationFrame::new(self.latitude, self.longitude, self.jd)
+                .and_then(|f| f.to_horizontal(coords[0], coords[1]))
+            {
+                Ok(horizontal) => (View::Horizon, horizontal),
+                Err(e) => {
+                    self.error = Some(e.to_string());
+                    return;
+                }
+            }
+        } else {
+            (View::Sky, coords)
+        };
+        self.view = view;
+        self.camera().center(view, coords);
+    }
     pub(crate) fn object_on_sky(&self, chart: &Chart<'_>, painter: &egui::Painter) {
         if let Some((label, Position::Sky([ra, dec], _))) = &self.objects.marker {
             if let Some(p) = chart.observed(*ra, *dec) {
@@ -135,7 +206,7 @@ impl App {
             if !self.objects.display.group_visible(kind) {
                 continue;
             }
-            let Some(c) = self.objects.scene_catalog(kind, &sky.root, ui.ctx()) else {
+            let Some(c) = self.objects.scene_catalog(kind, sky, ui.ctx()) else {
                 continue;
             };
             let scene = super::layers::Overlay {
