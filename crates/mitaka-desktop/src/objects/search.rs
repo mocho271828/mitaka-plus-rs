@@ -200,6 +200,59 @@ mod tests {
     use super::*;
 
     #[test]
+    fn named_search_and_saved_membership_use_the_same_gui_table() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let mut hip = [0; mitaka_core::catalog::HIP_RECORD_BYTES];
+        hip[..4].copy_from_slice(&32349i32.to_le_bytes());
+        std::fs::write(root.join("hip.dat"), hip).unwrap();
+        let files = ["star_names_HIP.dat", "star_names.dat", "star_names_jp.dat"];
+        for (i, file) in files.iter().enumerate() {
+            // 下位の表と異なる別名で、共存時に同じ表が選ばれることを確認する。
+            let name = ["Legacy", "Sirius", "SiriusJp"][i];
+            std::fs::write(root.join(file), format!(" 32349*{name}")).unwrap();
+            let displayed = crate::layers::catalog::LayersCatalog::load(root, &[]);
+            assert_eq!(displayed.names.get(&32349).unwrap(), name);
+            assert!(displayed.known_star_names.contains(&32349));
+            let cat = Catalog::load(Kind::Stars, root).unwrap();
+            assert_eq!(cat.search(name), Some(vec![0]));
+            assert!(cat.info(0, crate::J2000).contains(file));
+        }
+        std::fs::write(root.join(files[2]), b"invalid star name").unwrap();
+        assert!(crate::layers::catalog::gui_star_names(root).is_err());
+        for file in files {
+            std::fs::remove_file(root.join(file)).unwrap();
+        }
+        let displayed = crate::layers::catalog::LayersCatalog::load(root, &[]);
+        assert!(displayed.known_star_names.is_empty());
+        let cat = Catalog::load(Kind::Stars, root).unwrap();
+        assert_eq!(cat.search("Sirius"), Some(vec![]));
+        assert_eq!(cat.search("32349"), Some(vec![0]));
+    }
+
+    #[test]
+    #[ignore = "旧版の日本語・英語固有名表を含む実カタログが必要"]
+    fn restores_native_sirius_selection_with_either_gui_table() {
+        let original = std::path::PathBuf::from(std::env::var_os("MITAKA_DATA_ROOT").unwrap());
+        let mut sky = crate::SkyData::open(&original).unwrap();
+        let mut state = crate::session::Session::default();
+        state.0["selected_star_name_hips"] = serde_json::json!([32349]);
+        let bytes = serde_json::to_vec(&state.0).unwrap();
+        let state = crate::session::Session::decode(&bytes).unwrap();
+        for name in ["star_names.dat", "star_names_jp.dat"] {
+            let temp = tempfile::tempdir().unwrap();
+            sky.root = temp.path().to_owned();
+            std::fs::copy(original.join(name), sky.root.join(name)).unwrap();
+            sky.layers =
+                crate::layers::catalog::LayersCatalog::load(&sky.root, &sky.constellations);
+            assert_eq!(sky.layers.known_star_names.len(), 174);
+            assert!(crate::session_ui::DisplayLayers::prepare(&state, &sky).is_ok());
+            let c = Catalog::load_with_stars(Kind::Stars, &sky.root, Some(&sky.stars)).unwrap();
+            assert_eq!(c.search("Sirius").unwrap().len(), 1);
+        }
+    }
+
+    #[test]
     fn pages_all_stars_and_planets_and_joins_optional_names_by_hip() {
         let root = tempfile::tempdir().unwrap();
         let mut hip = vec![];

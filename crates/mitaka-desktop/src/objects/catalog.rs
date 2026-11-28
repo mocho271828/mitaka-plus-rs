@@ -2,7 +2,7 @@ use super::{Kind, Position};
 use crate::catalog::SkyData;
 use mitaka_core::{
     catalog::{load_constellations, load_hipparcos},
-    extended_catalog::{load_ngc, load_sdss, load_star_names, SdssKind, SdssRecord},
+    extended_catalog::{load_ngc, load_sdss, SdssKind, SdssRecord},
     small_body,
 };
 use std::{collections::HashMap, io, path::Path, sync::Arc};
@@ -185,18 +185,16 @@ impl Catalog {
                 Store::Static
             }
             Kind::Stars => {
-                let names = match load_star_names(&root.join("star_names_HIP.dat")) {
-                    Ok(names) => names
-                        .into_iter()
-                        .map(|s| (s.hip, s))
-                        .collect::<HashMap<_, _>>(),
+                let (name_file, names) = match crate::layers::catalog::gui_star_names(root) {
+                    Ok(table) => table,
                     Err(e) => {
                         if e.kind() != io::ErrorKind::NotFound {
                             warnings.push(e.to_string());
                         }
-                        HashMap::new()
+                        ("", Vec::new())
                     }
                 };
+                let names: HashMap<_, _> = names.into_iter().map(|s| (s.hip, s)).collect();
                 let on_disk;
                 let stars = match stars {
                     Some(stars) => stars,
@@ -212,7 +210,7 @@ impl Catalog {
                         star.source_row, star.magnitude
                     );
                     if let Some(s) = names.get(&star.hip) {
-                        source.push_str(&format!(" · star_names_HIP.dat 行 {}", s.source_row));
+                        source.push_str(&format!(" · {name_file} 行 {}", s.source_row));
                         for alias in [&s.name_bytes, &s.localized_name_bytes] {
                             let alias = name(alias);
                             if !alias.is_empty() && alias != "*" {
