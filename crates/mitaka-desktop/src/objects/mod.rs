@@ -214,7 +214,12 @@ impl Browser {
             }
         }
     }
-    fn panel(&mut self, ctx: &egui::Context, sky: &SkyData, epoch: [f64; 3]) -> Option<Position> {
+    fn panel(
+        &mut self,
+        ctx: &egui::Context,
+        sky: &SkyData,
+        epoch: [f64; 3],
+    ) -> Option<(Position, bool)> {
         if self.open && self.root.as_ref() != Some(&sky.root) {
             self.root = Some(sky.root.clone());
             if self.scope.is_some_and(|k| !Kind::GENERAL.contains(&k)) {
@@ -364,13 +369,14 @@ impl Browser {
         if !(apply || self.follow && self.epoch != Some(epoch)) {
             return None;
         }
+        let focus = apply || self.epoch.is_none();
         self.epoch = Some(epoch);
         let c = self.data.as_ref()?;
         match c.locate(i, sky, epoch[0]) {
             Ok(p) => {
                 self.error = None;
                 self.marker = Some((c.title(i), p));
-                Some(p)
+                Some((p, focus))
             }
             Err(e) => {
                 self.marker = None;
