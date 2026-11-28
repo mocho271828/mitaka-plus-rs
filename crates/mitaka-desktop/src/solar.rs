@@ -398,19 +398,20 @@ impl Solar {
     }
 
     pub fn approach(&mut self, body: usize) -> io::Result<()> {
-        let scene = self
-            .scene
-            .as_ref()
-            .ok_or_else(|| io::Error::other("太陽系データがありません"))?;
-        self.stop_flight_to_target(body, scene.bodies[body]);
-        Ok(())
+        self.focus_body(body, true)
     }
-    fn stop_flight_to_target(&mut self, body: usize, dest: Point) {
-        self.stop();
+    pub(crate) fn focus_body(&mut self, body: usize, approach: bool) -> io::Result<()> {
+        let dest = self
+            .body_point(body)
+            .ok_or_else(|| io::Error::other("太陽系データがありません"))?;
+        if approach {
+            self.stop();
+            self.camera.distance = Self::body_distance(body);
+        }
         self.selected = body;
         self.tracking = Tracking::Body;
         self.camera.target = dest;
-        self.camera.distance = RADII_KM[body] * 6. / KM_PER_AU;
+        Ok(())
     }
     pub fn begin_surface_flight(&mut self, ground: Site, jd: f64, ascend: bool) -> io::Result<()> {
         let center = self
