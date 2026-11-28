@@ -32,6 +32,7 @@ struct Clock {
 
 struct TimeAnimation {
     start: Instant,
+    last: Instant,
     from: f64,
     to: f64,
     seconds: f64,
@@ -41,7 +42,7 @@ impl TimeAnimation {
     fn sample(&self, now: Instant) -> (f64, bool) {
         let elapsed = now.saturating_duration_since(self.start).as_secs_f64();
         if self.seconds <= 0. || elapsed >= self.seconds {
-            return (self.to, true);
+            return (self.to, elapsed > self.seconds);
         }
         let t = elapsed / self.seconds;
         let weight = if self.smooth {
@@ -96,10 +97,9 @@ impl Playback {
         self.plus_speed = 0;
     }
     fn start(&mut self, jd: f64, rate: f64) {
-        self.animation = None;
         self.realtime = false;
         let now = Instant::now();
-        self.clock = (rate != 0.).then_some(Clock {
+        self.clock = (rate != 0. || self.plus_speed != 0).then_some(Clock {
             jd,
             anchor: now,
             last: now,
@@ -126,7 +126,36 @@ impl Playback {
         }
         Ok(())
     }
+    fn reanchor(&mut self, now: Instant, jd: f64, bounds: [f64; 2]) {
+        if let Some(clock) = &mut self.clock {
+            if (clock.days_per_second > 0. && jd >= bounds[1])
+                || (clock.days_per_second < 0. && jd <= bounds[0])
+            {
+                self.stop();
+            } else {
+                clock.jd = jd;
+                clock.anchor = now;
+                clock.last = now;
+            }
+        }
+    }
     fn sample(&mut self, now: Instant, bounds: [f64; 2]) -> Option<f64> {
+        if let Some(animation) = &mut self.animation {
+            if now
+                .checked_duration_since(animation.last)
+                .is_none_or(|d| d > Duration::from_secs(1))
+            {
+                self.stop();
+                return None;
+            }
+            animation.last = now;
+            let (jd, done) = animation.sample(now);
+            if done {
+                self.animation = None;
+            }
+            self.reanchor(now, jd, bounds);
+            return Some(jd);
+        }
         let c = self.clock.as_mut()?;
         if now
             .checked_duration_since(c.last)
@@ -206,12 +235,17 @@ impl App {
         if numeric && target == self.jd {
             return Ok(());
         }
-        self.playback.stop();
+        self.playback.realtime = false;
+        let now = Instant::now();
         if seconds <= 0. {
-            return self.apply_date(target);
+            self.apply_date(target)?;
+            self.playback.animation = None;
+            self.playback.reanchor(now, target, self.date_bounds());
+            return Ok(());
         }
         self.playback.animation = Some(TimeAnimation {
-            start: Instant::now(),
+            start: now,
+            last: now,
             from: self.jd,
             to: target,
             seconds,
@@ -219,22 +253,18 @@ impl App {
         });
         Ok(())
     }
+    fn date_bounds(&self) -> [f64; 2] {
+        self.data
+            .as_ref()
+            .map_or([37.5, 5373484.49], |d| d.date_range)
+    }
     pub(super) fn clock_frame(&mut self, ctx: &egui::Context) {
+        let bounds = self.date_bounds();
         let p = &mut self.playback;
         if !p.realtime && p.clock.is_none() && p.animation.is_none() {
             return;
         }
-        let bounds = self
-            .data
-            .as_ref()
-            .map_or([37.5, 5373484.49], |d| d.date_range);
-        let jd = if let Some(anim) = &p.animation {
-            let (jd, done) = anim.sample(Instant::now());
-            if done {
-                p.animation = None;
-            }
-            Some(jd)
-        } else if p.realtime {
+        let jd = if p.realtime {
             Some(UNIX_EPOCH_JD + Utc::now().timestamp_millis() as f64 / 86400000.)
         } else {
             p.sample(Instant::now(), bounds)
@@ -479,6 +509,7 @@ mod tests {
         p.set_tracking(false);
         p.animation = Some(TimeAnimation {
             start,
+            last: start,
             from: 100.,
             to: 110.,
             seconds: 5.,
@@ -498,6 +529,7 @@ mod tests {
         let start = Instant::now();
         let a = TimeAnimation {
             start,
+            last: start,
             from: 100.,
             to: 104.,
             seconds: 2.,
@@ -505,7 +537,39 @@ mod tests {
         };
         assert_eq!(a.sample(start), (100., false));
         assert!((a.sample(start + Duration::from_millis(500)).0 - 100.5857864376).abs() < 1e-8);
-        assert_eq!(a.sample(start + Duration::from_secs(2)), (104., true));
+        assert_eq!(a.sample(start + Duration::from_secs(2)), (104., false));
+        assert_eq!(a.sample(start + Duration::from_millis(2001)), (104., true));
+    }
+    #[test]
+    fn animation_reanchors_signed_playback_and_keeps_stopped_clocks_stopped() {
+        let begin = Instant::now();
+        for (speed, rate) in [(2, 0.5), (-2, -0.5), (0, 1.), (0, 0.)] {
+            let mut p = Playback {
+                plus_speed: speed,
+                ..Default::default()
+            };
+            p.start(100., rate);
+            p.animation = Some(TimeAnimation {
+                start: begin,
+                last: begin,
+                from: 100.,
+                to: 104.,
+                seconds: 0.5,
+                smooth: false,
+            });
+            for (ms, expected) in [(250, 102.), (500, 104.), (750, 104.)] {
+                assert_eq!(
+                    p.sample(begin + Duration::from_millis(ms), [90., 110.]),
+                    Some(expected)
+                );
+                assert_eq!(p.plus_speed, speed);
+            }
+            assert!(p.animation.is_none());
+            assert_eq!(
+                p.sample(begin + Duration::from_secs(1), [90., 110.]),
+                (rate != 0.).then_some(104. + rate * 0.25)
+            );
+        }
     }
     #[test]
     fn clamps_gui_month_and_rolls_plus_month() {
