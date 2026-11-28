@@ -76,6 +76,24 @@ impl Default for LayerOptions {
     }
 }
 impl LayerOptions {
+    pub(super) fn rebind_stars(&mut self, previous: &LayersCatalog, next: &LayersCatalog) {
+        let selected = next
+            .known_star_names
+            .iter()
+            .copied()
+            .filter(|hip| {
+                if previous.known_star_names.contains(hip) {
+                    self.selected
+                        .as_ref()
+                        .map_or_else(|| previous.featured.contains(hip), |s| s.contains(hip))
+                } else {
+                    next.featured.contains(hip)
+                }
+            })
+            .collect();
+        self.selected = Some(selected);
+    }
+
     pub fn shows(&self, id: &[u8]) -> bool {
         self.show_all_constellations != self.exceptions.contains(id)
     }
@@ -348,5 +366,30 @@ mod tests {
         }
         value["observer_latitude_deg"] = json!(site.latitude + 1.);
         assert!(LayerOptions::restore(value, &data).is_err());
+    }
+}
+
+#[cfg(test)]
+mod reload_tests {
+    use super::*;
+
+    #[test]
+    fn common_hips_keep_membership_and_new_names_use_their_own_defaults() {
+        let old = LayersCatalog {
+            known_star_names: [1, 2, 3].into(),
+            featured: [1, 3].into(),
+            ..Default::default()
+        };
+        let new = LayersCatalog {
+            known_star_names: [1, 2, 4, 5].into(),
+            featured: [2, 4].into(),
+            ..Default::default()
+        };
+        let mut options = LayerOptions::default();
+        options.rebind_stars(&old, &new);
+        assert_eq!(options.selected, Some([1, 4].into()));
+        options.selected = Some([2, 3].into());
+        options.rebind_stars(&old, &new);
+        assert_eq!(options.selected, Some([2, 4].into()));
     }
 }
