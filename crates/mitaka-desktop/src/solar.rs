@@ -669,7 +669,7 @@ impl Solar {
                 (-i.smooth_scroll_delta.y * 0.008).clamp(-2., 2.).exp() / i.zoom_delta()
             });
             if (factor - 1.).abs() > 1e-6 {
-                if !self.tracking.earth_moon() {
+                if self.flying() || self.flight_site.is_some() {
                     self.stop();
                 }
                 if on_surface {

@@ -1,4 +1,5 @@
 //! 実ウィンドウからGPU描画結果を読み戻して、各シーンの切替と表示を検査する。
+mod solar_input;
 pub(crate) mod terrain;
 
 use super::{capture, galaxies, projection::View, surface, App};
@@ -181,6 +182,7 @@ impl Smoke {
                 app.projector.open = false;
             }
             Scene::Solar => {
+                solar_input::check_tracking(data)?;
                 // 単なるエラー文を描画成功として数えない。
                 app.solar.prepare(&data.ephemeris, app.jd)?;
                 app.view = View::Solar;
