@@ -73,17 +73,7 @@ impl SkyData {
         if ephemeris.planet_count() != 9 {
             return Err(io::Error::other("CF96は9天体を必要とします"));
         }
-        let mut date_range = [
-            mitaka_core::lunar::LUNAR_MINIMUM_JD,
-            mitaka_core::lunar::LUNAR_MAXIMUM_JD,
-        ];
-        for i in 0..ephemeris.planet_count() {
-            let [lo, hi] = ephemeris.time_range(i)?;
-            date_range = [lo.max(date_range[0]), hi.min(date_range[1])];
-        }
-        if date_range[0] > date_range[1] {
-            return Err(io::Error::other("暦表と月位置計算の有効範囲が重なりません"));
-        }
+        let date_range = observation_range(&ephemeris)?;
         Ok(Self {
             physical_sky: crate::solar::sky::Catalog::new(&stars),
             deep_sky: Default::default(),
@@ -96,4 +86,19 @@ impl SkyData {
             ephemeris,
         })
     }
+}
+
+pub(crate) fn observation_range(ephemeris: &Cf96Ephemeris) -> io::Result<[f64; 2]> {
+    let mut date_range = [
+        mitaka_core::lunar::LUNAR_MINIMUM_JD,
+        mitaka_core::lunar::LUNAR_MAXIMUM_JD,
+    ];
+    for i in 0..ephemeris.planet_count() {
+        let [lo, hi] = ephemeris.time_range(i)?;
+        date_range = [lo.max(date_range[0]), hi.min(date_range[1])];
+    }
+    if date_range[0] > date_range[1] {
+        return Err(io::Error::other("暦表と月位置計算の有効範囲が重なりません"));
+    }
+    Ok(date_range)
 }

@@ -73,6 +73,24 @@ pub(crate) fn planet(system: &Cf96Ephemeris, index: usize, jd: f64) -> io::Resul
     };
     j2000_equatorial_to_ecliptic(position)
 }
+/// sky_model.cpp の地心月軌道を、描画時点の地球中心に移す。
+fn lunar_orbit(jd: f64, range: [f64; 2], earth: Point) -> io::Result<Vec<Point>> {
+    const PERIOD_DAYS: f64 = 27.321661;
+    let start = (jd - PERIOD_DAYS * 0.5).max(range[0]);
+    let end = (jd + PERIOD_DAYS * 0.5).min(range[1]);
+    (0..=180)
+        .map(|i| {
+            let date = if i == 180 {
+                end
+            } else {
+                start + (end - start) * f64::from(i) / 180.
+            };
+            lunar_position(date)
+                .and_then(j2000_equatorial_to_ecliptic)
+                .map(|moon| plus(earth, moon))
+        })
+        .collect()
+}
 struct Scene {
     jd: f64,
     bodies: [Point; 11],
@@ -100,17 +118,11 @@ impl Scene {
         }
         let moon = lunar_position(jd)?;
         bodies[10] = plus(bodies[3], j2000_equatorial_to_ecliptic(moon)?);
-        // 月の軌道は現在の地球を基点とした地心軌道として表示する。
-        let lo = (jd - 13.67).max(mitaka_core::lunar::LUNAR_MINIMUM_JD);
-        let hi = (jd + 13.67).min(mitaka_core::lunar::LUNAR_MAXIMUM_JD);
-        let moon_path = (0..=90)
-            .map(|i| {
-                lunar_position(lo + (hi - lo) * f64::from(i) / 90.)
-                    .and_then(j2000_equatorial_to_ecliptic)
-                    .map(|p| plus(bodies[3], p))
-            })
-            .collect::<io::Result<Vec<_>>>()?;
-        orbits.push(moon_path);
+        orbits.push(lunar_orbit(
+            jd,
+            crate::catalog::observation_range(system)?,
+            bodies[3],
+        )?);
         Ok(Self {
             jd,
             bodies,
@@ -1008,6 +1020,42 @@ mod tests {
             for body in [3, 10] {
                 assert!(rect.contains(solar.camera.project(centers[body], rect).unwrap().0));
             }
+        }
+    }
+    fn check_lunar_ends(path: &[Point], earth: Point, first: f64, last: f64) {
+        assert_eq!(path.len(), 181);
+        for (index, date) in [(0, first), (180, last)] {
+            let relative = j2000_equatorial_to_ecliptic(lunar_position(date).unwrap()).unwrap();
+            assert_eq!(path[index], plus(earth, relative));
+        }
+    }
+    #[test]
+    fn lunar_orbit_clips_endpoints_to_the_common_ephemeris_range() {
+        let range = [2451500., 2451600.];
+        let earth = [1.1, -0.4, 0.];
+        for (jd, first, last) in [
+            (2451500., 2451500., 2451513.6608305),
+            (2451550., 2451536.3391695, 2451563.6608305),
+            (2451600., 2451586.3391695, 2451600.),
+        ] {
+            check_lunar_ends(&lunar_orbit(jd, range, earth).unwrap(), earth, first, last);
+        }
+    }
+
+    #[test]
+    #[ignore = "利用者の CF96 暦表"]
+    fn lunar_path_matches_native_solar_model_cases() {
+        let root = std::path::PathBuf::from(std::env::var_os("MITAKA_DATA_ROOT").unwrap());
+        let eph = Cf96Ephemeris::load(&root.join("cf96.dat")).unwrap();
+        let [start, end] = crate::catalog::observation_range(&eph).unwrap();
+        for jd in [start, (start + end) * 0.5, end] {
+            let scene = Scene::load(&eph, jd).unwrap();
+            check_lunar_ends(
+                &scene.orbits[9],
+                scene.bodies[3],
+                start.max(jd - 27.321661 / 2.),
+                end.min(jd + 27.321661 / 2.),
+            );
         }
     }
     #[test]
