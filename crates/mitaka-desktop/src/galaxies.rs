@@ -261,9 +261,16 @@ impl Browser {
         camera: SolarCamera,
         display: &Display,
         picking: Picking,
+        surface_view: bool,
     ) {
         let rect = response.rect;
-        self.prepare(painter.ctx(), display);
+        // GalaxyOverlay.mm は地表モードを抜けた時点で元の表示設定に戻す。
+        let effective = Display {
+            ngc: display.ngc,
+            galaxies: display.galaxies && !surface_view,
+            quasars: display.quasars && !surface_view,
+        };
+        self.prepare(painter.ctx(), &effective);
         let milky = self.local_visible[0] && radiative::galactic_view(camera).is_some();
         if milky && self.show_radiation {
             if let Some(Source::Loaded(cat)) = self.sources.first() {
@@ -276,8 +283,8 @@ impl Browser {
             milky,
             self.local_visible[1],
             self.local_visible[2],
-            display.galaxies,
-            display.quasars,
+            effective.galaxies,
+            effective.quasars,
         ];
         let catalogs: Vec<_> = [
             Kind::Sdss,
@@ -375,6 +382,57 @@ impl Browser {
                 let _ = tx.send(Raster::render(view, &catalogs, &flag));
                 ctx.request_repaint();
             });
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn entering_and_leaving_surface_masks_only_sdss_and_preserves_preferences() {
+        let ctx = egui::Context::default();
+        let mut browser = Browser::new(PathBuf::new(), &ctx);
+        browser.local_visible = [false, false, true];
+        let fixture = Arc::new(Objects {
+            rows: vec![],
+            source_rows: 0,
+            radius: 1.,
+            radiation: None,
+        });
+        for kind in [Kind::Nearby, Kind::Sdss, Kind::Quasars] {
+            browser.sources[kind as usize] = Source::Loaded(fixture.clone());
+        }
+        for quasar_enabled in [true, false] {
+            let prefs = Display {
+                ngc: true,
+                galaxies: true,
+                quasars: quasar_enabled,
+            };
+            for surface in [false, true, false] {
+                let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let (response, painter) =
+                            ui.allocate_painter(egui::vec2(80., 60.), egui::Sense::hover());
+                        browser.paint(
+                            &painter,
+                            &response,
+                            Default::default(),
+                            &prefs,
+                            Picking::None,
+                            surface,
+                        );
+                    });
+                });
+                let visible =
+                    |kind: Kind| browser.expected.unwrap().mask & (1 << kind as usize) != 0;
+                assert!(visible(Kind::Nearby));
+                assert_eq!(visible(Kind::Sdss), !surface);
+                assert_eq!(visible(Kind::Quasars), !surface && quasar_enabled);
+                assert!(prefs.ngc && prefs.galaxies);
+                assert_eq!(prefs.quasars, quasar_enabled);
+            }
         }
     }
 }
